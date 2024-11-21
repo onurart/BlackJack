@@ -1,0 +1,200 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blackjack Game</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        body {
+            background-color: #343a40;
+            color: #fff;
+        }
+        .card-deck {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+        .card {
+            width: 100px;
+            height: 150px;
+            background-color: #fff;
+            color: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            font-size: 1.2rem;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+<div class="container py-5">
+    <h1 class="text-center mb-4">Blackjack Game</h1>
+
+    <!-- Login Section -->
+    <div id="loginSection" class="d-flex justify-content-center mb-4">
+        <input type="text" id="username" class="form-control w-25 me-3" placeholder="Enter Username">
+        <button id="loginBtn" class="btn btn-primary">Login</button>
+    </div>
+
+    <!-- Game Section -->
+    <div id="gameSection" style="display: none;">
+        <!-- Bet Input and Start Button -->
+        <div class="d-flex justify-content-center mb-4">
+            <input type="number" id="betAmount" class="form-control w-25 me-3" placeholder="Enter Bet Amount">
+            <button id="startGameBtn" class="btn btn-success">Start Game</button>
+        </div>
+
+        <!-- Player and Dealer Hands -->
+        <div class="row text-center mb-5">
+            <div class="col-md-6">
+                <h3>Player's Hand</h3>
+                <div id="playerHand" class="card-deck"></div>
+                <p id="playerScore">Score: 0</p>
+            </div>
+
+            <div class="col-md-6">
+                <h3>Dealer's Hand</h3>
+                <div id="dealerHand" class="card-deck"></div>
+                <p id="dealerScore">Score: Hidden</p>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="text-center">
+            <button id="hitBtn" class="btn btn-primary me-2">Hit</button>
+            <button id="stayBtn" class="btn btn-warning me-2">Stay</button>
+            <button id="splitBtn" class="btn btn-info me-2">Split</button>
+            <button id="doubleDownBtn" class="btn btn-danger">Double Down</button>
+            <button id="drawCardBtn" class="btn btn-success me-2">Draw Card</button>
+        </div>
+
+        <!-- Game Log -->
+        <div class="mt-5">
+            <h4>Game Log</h4>
+            <div id="gameLog" class="bg-dark p-3 rounded" style="height: 200px; overflow-y: auto;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Initialize game elements
+    const playerHand = document.getElementById('playerHand');
+    const dealerHand = document.getElementById('dealerHand');
+    const playerScore = document.getElementById('playerScore');
+    const dealerScore = document.getElementById('dealerScore');
+    const gameLog = document.getElementById('gameLog');
+    const loginSection = document.getElementById('loginSection');
+    const gameSection = document.getElementById('gameSection');
+
+    let sessionId = null;
+
+    const addLog = (message) => {
+        const logEntry = document.createElement('p');
+        logEntry.textContent = message;
+        gameLog.appendChild(logEntry);
+        gameLog.scrollTop = gameLog.scrollHeight;
+    };
+
+    const renderCards = (handElement, cards) => {
+        handElement.innerHTML = '';
+        if (cards) {
+            cards.forEach(card => {
+                const cardDiv = document.createElement('div');
+                cardDiv.className = 'card';
+                cardDiv.textContent = `${card.rank} of ${card.suit}`;
+                handElement.appendChild(cardDiv);
+            });
+        }
+    };
+
+    document.getElementById('loginBtn').addEventListener('click', async () => {
+        const username = document.getElementById('username').value;
+        if (!username) {
+            alert('Please enter a username.');
+            return;
+        }
+
+        const response = await fetch('https://localhost:7166/api/BlackJack/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            sessionId = data.sessionId;
+            loginSection.style.display = 'none';
+            gameSection.style.display = 'block';
+            addLog(`Login successful! Session ID: ${sessionId}`);
+        } else {
+            const error = await response.json();
+            alert(error.message || 'Login failed.');
+        }
+    });
+
+    document.getElementById('startGameBtn').addEventListener('click', async () => {
+        const betAmount = document.getElementById('betAmount').value;
+        if (!betAmount || betAmount <= 0) {
+            alert('Please enter a valid bet amount.');
+            return;
+        }
+
+        const response = await fetch(`https://localhost:7166/api/BlackJack/newgame?sessionId=${sessionId}&betAmount=${betAmount}`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            renderCards(playerHand, data.playerHand);
+            renderCards(dealerHand, data.dealerHand.slice(0, 1).concat({ suit: 'Hidden', rank: '?' }));
+            playerScore.textContent = `Score: ${data.playerScore}`;
+            dealerScore.textContent = `Score: Hidden`;
+            addLog(data.message);
+        } else {
+            const error = await response.json();
+            alert(error.message || 'Failed to start game.');
+        }
+    });
+
+    document.getElementById('hitBtn').addEventListener('click', async () => {
+        const response = await fetch(`https://localhost:7166/api/BlackJack/hitDealer?sessionId=${sessionId}`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            renderCards(playerHand, data.playerHand);
+            playerScore.textContent = `Score: ${data.playerScore}`;
+            addLog(data.message);
+
+            if (data.gameOver) {
+                addLog('Game Over!');
+            }
+        } else {
+            const error = await response.json();
+            alert(error.message || 'Failed to hit.');
+        }
+    });
+
+    document.getElementById('stayBtn').addEventListener('click', async () => {
+        const response = await fetch(`https://localhost:7166/api/BlackJack/stay?sessionId=${sessionId}`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            renderCards(dealerHand, data.dealerHand);
+            dealerScore.textContent = `Score: ${data.dealerScore}`;
+            addLog(data.result);
+        } else {
+            const error = await response.json();
+            alert(error.message || 'Failed to stay.');
+        }
+    });
+</script>
+</body>
+</html>
