@@ -1,5 +1,4 @@
-﻿using BlackJack.Models;
-
+﻿
 namespace BlackJack.Service
 {
     public interface IGameMode
@@ -8,4 +7,5 @@ namespace BlackJack.Service
         string HandlePlayerMove(Player player, Dealer dealer, Deck deck, string move);
         string DetermineOutcome(Player player, Dealer dealer, Deck deck);
     }
+
 }

@@ -870,19 +870,20 @@
     ]
   },
   "packageFolders": {
-    "/Users/barlas/.nuget/packages/": {}
+    "/Users/barlaskagan/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/Users/barlas/Desktop/LobyyTechGame/TestBlackJack/RatioBlackJack/BlackJack/BlackJack.csproj",
+      "projectUniqueName": "/Users/barlaskagan/Project/BlackJack/BlackJack/BlackJack.csproj",
       "projectName": "BlackJack",
-      "projectPath": "/Users/barlas/Desktop/LobyyTechGame/TestBlackJack/RatioBlackJack/BlackJack/BlackJack.csproj",
-      "packagesPath": "/Users/barlas/.nuget/packages/",
-      "outputPath": "/Users/barlas/Desktop/LobyyTechGame/TestBlackJack/RatioBlackJack/BlackJack/obj/",
+      "projectPath": "/Users/barlaskagan/Project/BlackJack/BlackJack/BlackJack.csproj",
+      "packagesPath": "/Users/barlaskagan/.nuget/packages/",
+      "outputPath": "/Users/barlaskagan/Project/BlackJack/BlackJack/obj/",
       "projectStyle": "PackageReference",
+      "UsingMicrosoftNETSdk": false,
       "configFilePaths": [
-        "/Users/barlas/.nuget/NuGet/NuGet.Config"
+        "/Users/barlaskagan/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net9.0"

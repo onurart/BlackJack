@@ -1,9 +1,11 @@
-﻿namespace BlackJack.Models
+﻿using BlackJack.Helpers;
+
+namespace BlackJack.Models
 {
     public class Player
     {
         public List<Card> Hand { get; set; }
-        public int Score => CalculateScore();
+        public int Score => CardHelper.CalculateHandScore(Hand); // Skor hesaplama
 
         public Player()
         {
@@ -29,4 +31,5 @@
         }
 
     }
+
 }

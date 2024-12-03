@@ -1,18 +1,20 @@
-﻿[ApiController]
+﻿using BlackJack.Helpers;
+
+[ApiController]
 [Route("api/blackjack")]
 public class BlackJackController : ControllerBase
 {
     private readonly SessionManager _sessionManager;
     private readonly Deck _deck;
-
-    public BlackJackController(SessionManager sessionManager)
+    private readonly GameHelper _gameHelper;
+    public BlackJackController(SessionManager sessionManager, GameHelper gameHelper)
     {
         _sessionManager = sessionManager;
+        _gameHelper = gameHelper;
         _deck = new Deck();
     }
-
     [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest loginRequest)
+    public IActionResult Login([FromBody] LoginRequest loginRequest)
     {
         if (string.IsNullOrEmpty(loginRequest.username))
         {
@@ -22,282 +24,79 @@ public class BlackJackController : ControllerBase
         var sessionId = _sessionManager.StartNewSession(loginRequest.username);
         return Ok(new { Message = "Login successful", SessionId = sessionId });
     }
-
-    
     [HttpPost("new-game")]
-public IActionResult StartNewGame([FromBody] NewGameRequest request)
-{
-    if (request == null || string.IsNullOrEmpty(request.SessionId))
+    public IActionResult StartNewGame([FromBody] NewGameRequest request)
     {
-        return BadRequest(new { Message = "Session ID is required." });
-    }
+        var validationResult = _gameHelper.ValidateSessionAndBet(request.SessionId, request.BetAmount);
+        if (validationResult != null) return validationResult;
 
-    if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-    {
-        return BadRequest(new { Message = "Invalid Session ID format." });
-    }
+        var sessionId = Guid.Parse(request.SessionId);
+        var gameSession = new GameSession(new CasualMode());
+        gameSession.SetBetAmount(request.BetAmount);
+        _sessionManager.UpdateGameSession(sessionId, gameSession);
+        gameSession.StartNewSession();
+        gameSession.StartGame(_deck);
 
-    if (!_sessionManager.ValidateSession(sessionId))
-    {
-        return BadRequest(new { Message = "Invalid session ID" });
-    }
-
-    if (request.BetAmount <= 0)
-    {
-        return BadRequest(new { Message = "Bet amount must be greater than zero." });
-    }
-
-    // Yeni oyun oturumu oluştur
-    var gameSession = new GameSession(new CasualMode());
-    gameSession.SetBetAmount(request.BetAmount);
-    _sessionManager.UpdateGameSession(sessionId, gameSession);
-
-    // Oturumu sıfırla ve oyunu başlat
-    gameSession.StartNewSession();
-    gameSession.StartGame(_deck);
-
-    // Oyuncunun başlangıçta 21 puanına ulaşıp ulaşmadığını kontrol et
-    if (gameSession.GetPlayerScore() == 21)
-    {
-        // Krupiyenin hamlelerini yap
-        while (gameSession.GetDealerScore(true) < 17)
+        if (gameSession.GetPlayerScore() == 21)
         {
-            var dealerCard = _deck.DrawCard();
-            gameSession.Dealer.Hand.Add(dealerCard);
+            return _gameHelper.EndGameWithBlackjack(gameSession, sessionId);
         }
-
-        // Oyunu bitir ve sonucu belirle
-        var dealerScore = gameSession.GetDealerScore(true);
-        var result = dealerScore == 21
-            ? "Dealer also reached 21! It's a draw."
-            : "Player Wins with Blackjack!";
-
-        // Oyunu sona erdir
-        gameSession.EndGame(); // Yeni bir EndGame metodu yazılabilir
 
         return Ok(new
         {
-            Message = "Player reached 21. Game over.",
+            Message = "Game started",
             SessionId = sessionId,
             BetAmount = request.BetAmount,
             PlayerHand = gameSession.GetPlayerHand(),
-            DealerHand = gameSession.GetDealerHand(true),
+            DealerHand = gameSession.GetDealerHand(false),
             PlayerScore = gameSession.GetPlayerScore(),
-            DealerScore = dealerScore,
-            Result = result,
-            IsGameOver = true
+            DealerScore = gameSession.GetDealerScore(),
+            IsGameOver = false
         });
-    }
-
-    // Normal oyun başlangıcı
-    return Ok(new
+    } 
+    
+    [HttpPost("player-hit")]
+    public IActionResult PlayerHit([FromBody] RequestSession request)
     {
-        Message = "Game started",
-        SessionId = sessionId,
-        BetAmount = request.BetAmount,
-        PlayerHand = gameSession.GetPlayerHand(),
-        DealerHand = gameSession.GetDealerHand(false),
-        PlayerScore = gameSession.GetPlayerScore(),
-        DealerScore = gameSession.GetDealerScore(),
-        IsGameOver = false
-    });
-}
-
-    [HttpPost("double-down")]
-    public IActionResult DoubleDown([FromBody] RequestSession request)
-    {
-        if (request == null || string.IsNullOrEmpty(request.SessionId))
-        {
-            return BadRequest(new { Message = "Session ID is required." });
-        }
-
-        if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-        {
-            return BadRequest(new { Message = "Invalid Session ID format." });
-        }
-
-        if (!_sessionManager.ValidateSession(sessionId))
-        {
-            return BadRequest(new { Message = "Invalid session ID" });
-        }
-
-        var gameSession = _sessionManager.GetGameSession(sessionId);
+        var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
         if (gameSession == null)
         {
-            return BadRequest(new { Message = "Session not found." });
+            return BadRequest(new { Message = "Invalid session ID or game not started." });
         }
-
         if (!gameSession.IsGameStarted)
         {
             return BadRequest(new { Message = "The game has not started. Please start the game first." });
         }
-
-        if (gameSession.HasDoubledDown)
+        if (gameSession.IsGameOver)
         {
-            return BadRequest(new { Message = "You have already doubled down." });
+            return BadRequest(new { Message = "The game is already over. Please start a new game." });
         }
-
-        gameSession.DoubleDown();
-
-        var result = gameSession.PlayerHit(_deck);
-
-        return Ok(new
+        try
         {
-            Message = "Double down completed.",
-            PlayerHand = gameSession.GetPlayerHand(),
-            PlayerScore = gameSession.GetPlayerScore(),
-            BetAmount = gameSession.GetBetAmount(),
-            Result = result
-        });
+            var result = gameSession.HitCurrentHand(_deck);
+            if (gameSession.IsGameOver)
+            {
+                return _gameHelper.EndGameWithPlayerResult(gameSession, result);
+            }
+            return Ok(new
+            {
+                Message = result,
+                PlayerHands = gameSession.PlayerHands,
+                PlayerScore = gameSession.GetPlayerScore(),
+                CurrentHandIndex = gameSession.CurrentHandIndex + 1
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new
+            {
+                Message = "An error occurred during the Player Hit action.",
+                Details = ex.Message
+            });
+        }
     }
-
-
-
-    // [HttpPost("new-game")]
-// public IActionResult StartNewGame([FromBody] NewGameRequest request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     if (request.BetAmount <= 0)
-//     {
-//         return BadRequest(new { Message = "Bet amount must be greater than zero." });
-//     }
-//
-//     // Yeni oyun oturumu oluştur
-//     var gameSession = new GameSession(new CasualMode());
-//     gameSession.SetBetAmount(request.BetAmount);
-//     _sessionManager.UpdateGameSession(sessionId, gameSession);
-//
-//     // Oturum sıfırla ve oyunu başlat
-//     gameSession.StartNewSession();
-//     gameSession.StartGame(_deck);
-//
-//     // Oyuncu 21'e ulaştıysa
-//     if (gameSession.GetPlayerScore() == 21)
-//     {
-//         // Krupiyenin hamlelerini yap
-//         while (gameSession.GetDealerScore(true) < 17)
-//         {
-//             var dealerCard = _deck.DrawCard();
-//             gameSession.Dealer.Hand.Add(dealerCard);
-//         }
-//
-//         var dealerScore = gameSession.GetDealerScore(true);
-//         var result = dealerScore == 21
-//             ? "Dealer also reached 21! It's a draw."
-//             : "Player Wins!";
-//
-//         // Oyuncunun hamlesini bitir ve 21'e ulaşmasını belirt
-//         return Ok(new
-//         {
-//             Message = "Player reached 21. Dealer's turn completed.",
-//             SessionId = sessionId,
-//             BetAmount = request.BetAmount,
-//             PlayerHand = gameSession.GetPlayerHand(),
-//             DealerHand = gameSession.GetDealerHand(true),
-//             PlayerScore = gameSession.GetPlayerScore(),
-//             DealerScore = dealerScore,
-//             Result = result,
-//             IsGameOver = true // Oyun sona erdiğini belirt
-//         });
-//     }
-//
-//     // Normal oyun başlangıcı
-//     return Ok(new
-//     {
-//         Message = "Game started",
-//         SessionId = sessionId,
-//         BetAmount = request.BetAmount,
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         DealerHand = gameSession.GetDealerHand(false),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         DealerScore = gameSession.GetDealerScore(),
-//         IsGameOver = false // Oyun devam ediyor
-//     });
-// }
-
-    //    [HttpPost("new-game")]
-//     public IActionResult StartNewGame([FromBody] NewGameRequest request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     if (request.BetAmount <= 0)
-//     {
-//         return BadRequest(new { Message = "Bet amount must be greater than zero." });
-//     }
-//
-//     var gameSession = new GameSession(new CasualMode());
-//     gameSession.SetBetAmount(request.BetAmount);
-//     _sessionManager.UpdateGameSession(sessionId, gameSession);
-//
-//     gameSession.StartNewSession();
-//     gameSession.StartGame(_deck);
-//
-//     if (gameSession.GetPlayerScore() == 21)
-//     {
-//         while (gameSession.GetDealerScore(true) < 17)
-//         {
-//             var dealerCard = _deck.DrawCard();
-//             gameSession.Dealer.Hand.Add(dealerCard);
-//         }
-//
-//         var dealerScore = gameSession.GetDealerScore(true);
-//         var result = dealerScore == 21
-//             ? "Dealer also reached 21! It's a draw."
-//             : "Player Wins!";
-//
-//         return Ok(new
-//         {
-//             Message = "Player reached 21. Dealer's turn completed.",
-//             SessionId = sessionId,
-//             BetAmount = request.BetAmount,
-//             PlayerHand = gameSession.GetPlayerHand(),
-//             DealerHand = gameSession.GetDealerHand(true),
-//             PlayerScore = gameSession.GetPlayerScore(),
-//             DealerScore = dealerScore,
-//             Result = result
-//         });
-//     }
-//
-//     return Ok(new
-//     {
-//         Message = "Game started",
-//         SessionId = sessionId,
-//         BetAmount = request.BetAmount,
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         DealerHand = gameSession.GetDealerHand(false),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         DealerScore = gameSession.GetDealerScore()
-//     });
-// }
-    [HttpPost("player-hit")]
-public IActionResult PlayerHit([FromBody] RequestSession request)
+    [HttpPost("double-down")]
+    public IActionResult DoubleDown([FromBody] RequestSession request)
 {
     if (request == null || string.IsNullOrEmpty(request.SessionId))
     {
@@ -325,603 +124,232 @@ public IActionResult PlayerHit([FromBody] RequestSession request)
         return BadRequest(new { Message = "The game has not started. Please start the game first." });
     }
 
-    // Oyuncu 21 puanına ulaşmışsa kart çekmesine izin verme
-    if (gameSession.GetPlayerScore() == 21)
+    if (gameSession.HasDoubledDown)
     {
-        return BadRequest(new { Message = "You already have 21 points. You cannot draw more cards." });
+        return BadRequest(new { Message = "You have already doubled down." });
     }
-
-    var result = gameSession.PlayerHit(_deck);
-
-    // Oyuncu 21'e ulaştıysa krupiye hamlelerini yap
-    if (result == "Player Wins with 21!")
-    {
-        while (gameSession.GetDealerScore(true) < 17)
-        {
-            var dealerCard = _deck.DrawCard();
-            gameSession.Dealer.Hand.Add(dealerCard);
-        }
-
-        var dealerScore = gameSession.GetDealerScore(true);
-        var finalResult = dealerScore == 21
-            ? "Dealer also reached 21! It's a draw."
-            : "Player Wins!";
-
+    gameSession.DoubleDown();
+    var playerResult = gameSession.PlayerHit(_deck);
+    if (playerResult == "Player Bust") {
+        gameSession.EndGame();
         return Ok(new
         {
-            Message = "Player reached 21. Dealer's turn completed.",
+            Message = "You busted after doubling down. Game over.",
             PlayerHand = gameSession.GetPlayerHand(),
             PlayerScore = gameSession.GetPlayerScore(),
-            DealerHand = gameSession.GetDealerHand(true),
-            DealerScore = dealerScore,
-            Result = finalResult
+            Result = playerResult
         });
     }
-
-    // Oyuncu başarısız olduysa
-    if (result == "Player Bust")
+    while (gameSession.GetDealerScore(true) < 17)
     {
-        return Ok(new
-        {
-            Message = "Player bust. Dealer wins.",
-            PlayerHand = gameSession.GetPlayerHand(),
-            PlayerScore = gameSession.GetPlayerScore(),
-            DealerHand = gameSession.GetDealerHand(true),
-            DealerScore = gameSession.GetDealerScore(true),
-            Result = "Dealer Wins!"
-        });
+        var dealerCard = _deck.DrawCard();
+        gameSession.Dealer.Hand.Add(dealerCard);
     }
-
-    // Oyuncunun hamlesi devam ediyorsa
+    var dealerFinalScore = gameSession.GetDealerScore(true);
+    var isPlayerWin = dealerFinalScore > 21 || gameSession.GetPlayerScore() > dealerFinalScore;
+    var isDraw = gameSession.GetPlayerScore() == dealerFinalScore;
+    var resultMessage = isPlayerWin
+        ? "Player Wins!"
+        : isDraw
+            ? "Draw"
+            : "Dealer Wins!";
+    var payout = gameSession.CalculatePayout(isPlayerWin, isDraw);
+    gameSession.EndGame();
     return Ok(new
     {
+        Message = "Double down completed. " + resultMessage,
         PlayerHand = gameSession.GetPlayerHand(),
         PlayerScore = gameSession.GetPlayerScore(),
-        Result = result
+        DealerHand = gameSession.GetDealerHand(true),
+        DealerScore = dealerFinalScore,
+        BetAmount = payout,
+        Result = resultMessage
     });
 }
 
 
-    // [HttpPost("new-game")]
-        // public IActionResult StartNewGame([FromBody] NewGameRequest request)
-        // {
-        //     // Request geçerliliğini kontrol et
-        //     if (request == null || string.IsNullOrEmpty(request.SessionId))
-        //     {
-        //         return BadRequest(new { Message = "Session ID is required." });
-        //     }
-        //
-        //     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-        //     {
-        //         return BadRequest(new { Message = "Invalid Session ID format." });
-        //     }
-        //
-        //     if (!_sessionManager.ValidateSession(sessionId))
-        //     {
-        //         return BadRequest(new { Message = "Invalid session ID" });
-        //     }
-        //
-        //     if (request.BetAmount <= 0)
-        //     {
-        //         return BadRequest(new { Message = "Bet amount must be greater than zero." });
-        //     }
-        //
-        //     // Yeni oyun oturumu oluştur
-        //     var gameSession = new GameSession(new CasualMode());
-        //     gameSession.SetBetAmount(request.BetAmount);
-        //     _sessionManager.UpdateGameSession(sessionId, gameSession);
-        //
-        //     // Oturum sıfırla ve oyunu başlat
-        //     gameSession.StartNewSession();
-        //     gameSession.StartGame(_deck);
-        //
-        //     // Oyuncunun başlangıçta 21 puanına ulaşıp ulaşmadığını kontrol et
-        //     if (gameSession.GetPlayerScore() == 21)
-        //     {
-        //         // Krupiyenin hamlelerini yap
-        //         while (gameSession.GetDealerScore(true) < 17)
-        //         {
-        //             var dealerCard = _deck.DrawCard();
-        //             gameSession.Dealer.Hand.Add(dealerCard);
-        //         }
-        //
-        //         var dealerScore = gameSession.GetDealerScore(true);
-        //         var result = dealerScore == 21
-        //             ? "Dealer also reached 21! It's a draw."
-        //             : "Player Wins!";
-        //
-        //         return Ok(new
-        //         {
-        //             Message = "Player reached 21. Dealer's turn completed.",
-        //             SessionId = sessionId,
-        //             BetAmount = request.BetAmount,
-        //             PlayerHand = gameSession.GetPlayerHand(),
-        //             DealerHand = gameSession.GetDealerHand(true),
-        //             PlayerScore = gameSession.GetPlayerScore(),
-        //             DealerScore = dealerScore,
-        //             Result = result
-        //         });
-        //     }
-        //
-        //     // Normal oyun başlangıcı
-        //     return Ok(new
-        //     {
-        //         Message = "Game started",
-        //         SessionId = sessionId,
-        //         BetAmount = request.BetAmount,
-        //         PlayerHand = gameSession.GetPlayerHand(),
-        //         DealerHand = gameSession.GetDealerHand(false),
-        //         PlayerScore = gameSession.GetPlayerScore(),
-        //         DealerScore = gameSession.GetDealerScore()
-        //     });
-        // }
-
-        // [HttpPost("player-hit")]
-        // public IActionResult PlayerHit([FromBody] RequestSession request)
-        // {
-        //     if (request == null || string.IsNullOrEmpty(request.SessionId))
-        //     {
-        //         return BadRequest(new { Message = "Session ID is required." });
-        //     }
-        //
-        //     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-        //     {
-        //         return BadRequest(new { Message = "Invalid Session ID format." });
-        //     }
-        //
-        //     if (!_sessionManager.ValidateSession(sessionId))
-        //     {
-        //         return BadRequest(new { Message = "Invalid session ID" });
-        //     }
-        //
-        //     var gameSession = _sessionManager.GetGameSession(sessionId);
-        //     if (gameSession == null)
-        //     {
-        //         return BadRequest(new { Message = "Session not found." });
-        //     }
-        //
-        //     if (!gameSession.IsGameStarted)
-        //     {
-        //         return BadRequest(new { Message = "The game has not started. Please start the game first." });
-        //     }
-        //
-        //     var result = gameSession.PlayerHit(_deck);
-        //
-        //     // Oyuncu 21'e ulaştıysa krupiye hamlelerini yap
-        //     if (result == "Player Wins with 21!")
-        //     {
-        //         while (gameSession.GetDealerScore(true) < 17)
-        //         {
-        //             var dealerCard = _deck.DrawCard();
-        //             gameSession.Dealer.Hand.Add(dealerCard);
-        //         }
-        //
-        //         var dealerScore = gameSession.GetDealerScore(true);
-        //         var finalResult = dealerScore == 21
-        //             ? "Dealer also reached 21! It's a draw."
-        //             : "Player Wins!";
-        //
-        //         return Ok(new
-        //         {
-        //             Message = "Player reached 21. Dealer's turn completed.",
-        //             PlayerHand = gameSession.GetPlayerHand(),
-        //             PlayerScore = gameSession.GetPlayerScore(),
-        //             DealerHand = gameSession.GetDealerHand(true),
-        //             DealerScore = dealerScore,
-        //             Result = finalResult
-        //         });
-        //     }
-        //
-        //     // Oyuncu başarısız olduysa
-        //     if (result == "Player Bust")
-        //     {
-        //         return Ok(new
-        //         {
-        //             Message = "Player bust. Dealer wins.",
-        //             PlayerHand = gameSession.GetPlayerHand(),
-        //             PlayerScore = gameSession.GetPlayerScore(),
-        //             DealerHand = gameSession.GetDealerHand(true),
-        //             DealerScore = gameSession.GetDealerScore(true),
-        //             Result = "Dealer Wins!"
-        //         });
-        //     }
-        //
-        //     // Oyuncunun hamlesi devam ediyorsa
-        //     return Ok(new
-        //     {
-        //         PlayerHand = gameSession.GetPlayerHand(),
-        //         PlayerScore = gameSession.GetPlayerScore(),
-        //         Result = result
-        //     });
-        // }
-
     [HttpPost("hit-dealer")]
     public IActionResult HitDealer([FromBody] RequestSession request)
     {
-        if (request == null || string.IsNullOrEmpty(request.SessionId))
-        {
-            return BadRequest(new { Message = "Session ID is required." });
-        }
-
-        if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-        {
-            return BadRequest(new { Message = "Invalid Session ID format." });
-        }
-
-        if (!_sessionManager.ValidateSession(sessionId))
-        {
-            return BadRequest(new { Message = "Invalid session ID" });
-        }
-
-        var gameSession = _sessionManager.GetGameSession(sessionId);
+        var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
         if (gameSession == null)
         {
-            return BadRequest(new { Message = "Session not found." });
+            return BadRequest(new { Message = "Invalid session ID or game not started." });
+        }
+
+        if (gameSession.GetDealerScore(true) >= 17)
+        {
+            return Ok(new { Message = "Dealer cannot draw more cards." });
         }
 
         var newCard = _deck.DrawCard();
         gameSession.Dealer.Hand.Add(newCard);
-        var dealerScore = gameSession.GetDealerScore(true);
 
         return Ok(new
         {
-            NewCard = new { Rank = newCard.Rank, Suit = newCard.Suit, value = newCard.Value },
-            DealerScore = dealerScore
+            NewCard = new { Rank = newCard.Rank, Suit = newCard.Suit, Value = newCard.Value },
+            DealerScore = gameSession.GetDealerScore(true)
         });
-    }
-
-    [HttpPost("start-game")]
-    public IActionResult StartGame([FromBody] RequestSession request)
-    {
-        if (request == null || string.IsNullOrEmpty(request.SessionId))
-        {
-            return BadRequest(new { Message = "Session ID is required." });
-        }
-
-        if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-        {
-            return BadRequest(new { Message = "Invalid Session ID format." });
-        }
-
-        if (!_sessionManager.ValidateSession(sessionId))
-        {
-            return BadRequest(new { Message = "Invalid session ID" });
-        }
-
-        var gameSession = _sessionManager.GetGameSession(sessionId);
-        if (gameSession == null)
-        {
-            return BadRequest(new { Message = "Session not found." });
-        }
-
-        gameSession.StartGame(_deck);
-
-        return Ok(new { Message = "Game started successfully." });
     }
 
     [HttpPost("stay")]
+
     public IActionResult Stay([FromBody] RequestSession request)
     {
-        if (request == null || string.IsNullOrEmpty(request.SessionId))
-        {
-            return BadRequest(new { Message = "Session ID is required." });
-        }
-
-        if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-        {
-            return BadRequest(new { Message = "Invalid Session ID format." });
-        }
-
-        if (!_sessionManager.ValidateSession(sessionId))
-        {
-            return BadRequest(new { Message = "Invalid session ID" });
-        }
-
-        var gameSession = _sessionManager.GetGameSession(sessionId);
+        var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
         if (gameSession == null)
         {
-            return BadRequest(new { Message = "Session not found." });
+            return BadRequest(new { Message = "Invalid session ID or game not started." });
         }
-
-        // Oyunun başlamış olup olmadığını kontrol et
-        if (!gameSession.IsGameStarted)
+        if (gameSession.IsGameOver)
         {
-            return BadRequest(new { Message = "The game has not started. Please start the game first." });
+            return BadRequest(new { Message = "The game is already over. Please start a new game." });
+        }
+        var result = gameSession.StayCurrentHand(_deck);
+        if (!gameSession.IsGameOver)
+        {
+            gameSession.NextHand();
+            return Ok(new
+            {
+                PlayerHand = gameSession.GetPlayerHand(),
+                PlayerScore = gameSession.GetPlayerScore(),
+                DealerHand = new List<Card>(), 
+                DealerScore = (int?)null,
+                BetAmount = (decimal?)null,
+                Result = "Continue to the next hand"
+            });
+        }
+        var dealerResult = _gameHelper.EndGameWithDealerPlay(gameSession);
+        return Ok(new
+        {
+            PlayerHand = gameSession.GetPlayerHand(),
+            PlayerScore = gameSession.GetPlayerScore(),
+            DealerHand = gameSession.GetDealerHand(true),
+            DealerScore = dealerResult.DealerScore,
+            BetAmount = dealerResult.BetAmount,
+            Result = dealerResult.Result
+        });
+    }
+
+
+    // public IActionResult Stay([FromBody] RequestSession request)
+    // {
+    //     var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+    //     if (gameSession == null)
+    //     {
+    //         return BadRequest(new { Message = "Invalid session ID or game not started." });
+    //     }
+    //
+    //     if (gameSession.IsGameOver)
+    //     {
+    //         return BadRequest(new { Message = "The game is already over. Please start a new game." });
+    //     }
+    //
+    //     var result = gameSession.StayCurrentHand(_deck);
+    //
+    //     if (!gameSession.IsGameOver)
+    //     {
+    //         gameSession.NextHand();
+    //         return Ok(new
+    //         {
+    //             Message = $"Stayed on Hand {gameSession.CurrentHandIndex}. Moving to Hand {gameSession.CurrentHandIndex + 1}.",
+    //             PlayerHands = gameSession.PlayerHands,
+    //             PlayerScore = gameSession.GetPlayerScore(),
+    //             CurrentHandIndex = gameSession.CurrentHandIndex + 1
+    //         });
+    //     }
+    //
+    //     var dealerResult = _gameHelper.EndGameWithDealerPlay(gameSession);
+    //
+    //     return Ok(dealerResult);
+    // }
+
+    
+    //     public IActionResult Stay([FromBody] RequestSession request)
+    //     {
+    //         var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+    //         if (gameSession == null)
+    //         {
+    //             return BadRequest(new { Message = "Invalid session ID or game not started." });
+    //         }
+    //
+    //         if (gameSession.IsGameOver)
+    //         {
+    //             return BadRequest(new { Message = "All hands have been completed." });
+    //         }
+    //
+    //         var result = gameSession.StayCurrentHand(_deck);
+    //
+    //         if (!gameSession.IsGameOver)
+    //         {
+    //             gameSession.NextHand();
+    //             return Ok(new
+    //             {
+    //                 Message =
+    //                     $"Stayed on Hand {gameSession.CurrentHandIndex}. Moving to Hand {gameSession.CurrentHandIndex + 1}.",
+    //                 PlayerHands = gameSession.PlayerHands,
+    //                 PlayerScore = gameSession.GetPlayerScore(),
+    //                 CurrentHandIndex = gameSession.CurrentHandIndex + 1
+    //             });
+    //         }
+    //
+    //     return Ok(new
+    //     {
+    //         Message = "Game over.",
+    //         PlayerHands = gameSession.PlayerHands,
+    //         PlayerScore = gameSession.GetPlayerScore(),
+    //         DealerHand = gameSession.GetDealerHand(true),
+    //         DealerScore = gameSession.GetDealerScore(true),
+    //         Result = result
+    //     });
+    // }
+
+    [HttpPost("split")]
+    public IActionResult Split([FromBody] RequestSession request)
+    {
+        var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+        if (gameSession == null)
+        {
+            return BadRequest(new { Message = "Invalid session ID or game not started." });
         }
 
-        // Oyuncu kalmayı seçtiği için krupiye hamlelerini yapar
-        var result = gameSession.PlayerStay(_deck);
+        if (!gameSession.CanSplit())
+        {
+            return BadRequest(new { Message = "Split is only available if both cards have the same value." });
+        }
+
+        gameSession.Split(_deck);
 
         return Ok(new
         {
-            Message = "Player stays. Dealer's turn.",
-            PlayerHand = gameSession.GetPlayerHand(),
-            PlayerScore = gameSession.GetPlayerScore(),
-            DealerHand = gameSession.GetDealerHand(true), // Krupiyenin ikinci kartı açık
-            DealerScore = gameSession.GetDealerScore(true),
-            Result = result
+            Message = "Hand split successfully. Playing Hand 1.",
+            PlayerHands = gameSession.PlayerHands,
+            PlayerScores = gameSession.PlayerHands.Select(CardHelper.CalculateHandScore).ToList(), // Skor hesaplama
+            CurrentHandIndex = gameSession.CurrentHandIndex + 1
         });
     }
+
+    // public IActionResult Split([FromBody] RequestSession request)
+    // {
+    //     var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+    //     if (gameSession == null)
+    //     {
+    //         return BadRequest(new { Message = "Invalid session ID or game not started." });
+    //     }
+    //
+    //     if (!gameSession.CanSplit())
+    //     {
+    //         return BadRequest(new { Message = "Split is only available if both cards have the same value." });
+    //     }
+    //
+    //     gameSession.Split(_deck);
+    //
+    //     return Ok(new
+    //     {
+    //         Message = "Hand split successfully. Playing Hand 1.",
+    //         PlayerHands = gameSession.PlayerHands,
+    //         CurrentHandIndex = gameSession.CurrentHandIndex + 1
+    //     });
+    // }
+
 }
-
-
-// [HttpPost("player-hit")]
-// public IActionResult PlayerHit([FromBody] RequestSession request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     var gameSession = _sessionManager.GetGameSession(sessionId);
-//     if (gameSession == null)
-//     {
-//         return BadRequest(new { Message = "Session not found." });
-//     }
-//
-//     // Oyunun başlamış olup olmadığını kontrol et
-//     if (!gameSession.IsGameStarted)
-//     {
-//         return BadRequest(new { Message = "The game has not started. Please start the game first." });
-//     }
-//
-//     var result = gameSession.PlayerHit(_deck);
-//
-//     return Ok(new
-//     {
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         Result = result
-//     });
-// }
-
-// [HttpPost("player-hit")]
-// public IActionResult PlayerHit([FromBody] RequestSession request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     var gameSession = _sessionManager.GetGameSession(sessionId);
-//     if (gameSession == null)
-//     {
-//         return BadRequest(new { Message = "Session not found." });
-//     }
-//
-//     var result = gameSession.PlayerHit(_deck);
-//
-//     return Ok(new
-//     {
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         Result = result
-//     });
-// }
-// [HttpPost("start-game")]
-// public IActionResult StartGame([FromBody] RequestSession request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     var gameSession = _sessionManager.GetGameSession(sessionId);
-//     if (gameSession == null)
-//     {
-//         return BadRequest(new { Message = "Session not found." });
-//     }
-//
-//     gameSession.StartGame(_deck);
-//
-//     return Ok(new { Message = "Game started successfully." });
-// }
-
-
-// [HttpPost("stay")]
-// public async Task<IActionResult> Stay([FromBody] RequestSession request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     var gameSession = _sessionManager.GetGameSession(sessionId);
-//     if (gameSession == null)
-//     {
-//         return BadRequest(new { Message = "Session not found." });
-//     }
-//
-//     // Krupiyenin ikinci kartını aç
-//     var result = gameSession.PlayerStay(_deck);
-//
-//     return Ok(new
-//     {
-//         Message = "Player stays",
-//         Result = result,
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         DealerHand = gameSession.GetDealerHand(true), // Krupiyenin ikinci kartı açık
-//         DealerScore = gameSession.GetDealerScore(true) // İkinci kart açıkken skoru al
-//     });
-// }
-
-// [HttpPost("stay")]
-// public async Task<IActionResult> Stay([FromBody] RequestSession request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     var gameSession = _sessionManager.GetGameSession(sessionId);
-//     if (gameSession == null)
-//     {
-//         return BadRequest(new { Message = "Session not found." });
-//     }
-//
-//     var result = gameSession.PlayerStay(_deck);
-//
-//     return Ok(new
-//     {
-//         Message = "Player stays",
-//         Result = result,
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         DealerHand = gameSession.GetDealerHand(true), // Krupiyenin ikinci kartı açık
-//         DealerScore = gameSession.GetDealerScore()
-//     });
-// }
-
-// [HttpPost("new-game")]
-// public IActionResult StartNewGame([FromBody] NewGameRequest request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     if (request.BetAmount <= 0)
-//     {
-//         return BadRequest(new { Message = "Bet amount must be greater than zero." });
-//     }
-//
-//     var gameSession = new GameSession(new CasualMode());
-//     gameSession.SetBetAmount(request.BetAmount);
-//     _sessionManager.UpdateGameSession(sessionId, gameSession);
-//
-//     gameSession.StartNewSession();
-//     gameSession.StartGame(_deck);
-//
-//     return Ok(new
-//     {
-//         Message = "Game started",
-//         SessionId = sessionId,
-//         BetAmount = request.BetAmount, // Bahis tutarını yanıt olarak gönder
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         DealerHand = gameSession.GetDealerHand(false),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         DealerScore = gameSession.GetDealerScore()
-//     });
-// }
-// [HttpPost("player-hit")]
-// public IActionResult PlayerHit([FromBody] RequestSession request)
-// {
-//     if (request == null || string.IsNullOrEmpty(request.SessionId))
-//     {
-//         return BadRequest(new { Message = "Session ID is required." });
-//     }
-//
-//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid Session ID format." });
-//     }
-//
-//     if (!_sessionManager.ValidateSession(sessionId))
-//     {
-//         return BadRequest(new { Message = "Invalid session ID" });
-//     }
-//
-//     var gameSession = _sessionManager.GetGameSession(sessionId);
-//     if (gameSession == null)
-//     {
-//         return BadRequest(new { Message = "Session not found." });
-//     }
-//
-//     if (!gameSession.IsGameStarted)
-//     {
-//         return BadRequest(new { Message = "The game has not started. Please start the game first." });
-//     }
-//
-//     var result = gameSession.PlayerHit(_deck);
-//
-//     // Oyuncu 21'e ulaştıysa krupiye kartlarını çeker
-//     if (result == "Player Wins with 21!")
-//     {
-//         while (gameSession.GetDealerScore() < 21)
-//         {
-//             _deck.DrawCard();
-//             gameSession.Dealer.Hand.Add(_deck.DrawCard());
-//         }
-//
-//         var dealerResult = gameSession.GetDealerScore() == 21
-//             ? "Dealer also reached 21! It's a draw."
-//             : "Player Wins!";
-//
-//         return Ok(new
-//         {
-//             PlayerHand = gameSession.GetPlayerHand(),
-//             PlayerScore = gameSession.GetPlayerScore(),
-//             DealerHand = gameSession.GetDealerHand(true),
-//             DealerScore = gameSession.GetDealerScore(true),
-//             Result = dealerResult
-//         });
-//     }
-//
-//     return Ok(new
-//     {
-//         PlayerHand = gameSession.GetPlayerHand(),
-//         PlayerScore = gameSession.GetPlayerScore(),
-//         Result = result
-//     });
-// }

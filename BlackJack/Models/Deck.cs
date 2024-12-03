@@ -28,10 +28,21 @@ public class Deck
             }
         }
     }
+    // public void Shuffle()
+    // {
+    //     _cards = _cards.OrderBy(x => _random.Next()).ToList();
+    // }
     public void Shuffle()
     {
-        _cards = _cards.OrderBy(x => _random.Next()).ToList();
+        for (int i = _cards.Count - 1; i > 0; i--)
+        {
+            int j = _random.Next(0, i + 1);
+            var temp = _cards[i];
+            _cards[i] = _cards[j];
+            _cards[j] = temp;
+        }
     }
+
     public Card DrawCard()
     {
         if (_cards.Count == 0) InitializeDeck();

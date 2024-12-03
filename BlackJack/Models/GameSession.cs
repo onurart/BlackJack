@@ -1,477 +1,430 @@
 ﻿using BlackJack.Exceptions;
+using BlackJack.Helpers;
 using BlackJack.Service;
 
 namespace BlackJack.Models
 {
-    public class GameSession
+public class GameSession
+{
+    private List<List<Card>> _playerHands;
+    private int _currentHandIndex;
+    private decimal _betAmount;
+    private decimal _originalBetAmount;
+    private bool _isGameStarted;
+    private bool _isGameOver;
+    private bool _dealerSecondCardRevealed;
+    private readonly decimal _houseEdge = 0.02m;
+    private bool _hasDoubledDown = false;
+    public bool HasDoubledDown => _hasDoubledDown;
+    public bool IsGameOver => _isGameOver;
+    public bool IsGameStarted => _isGameStarted;
+    public List<List<Card>> PlayerHands => _playerHands;
+    public int CurrentHandIndex => _currentHandIndex;
+    public Player Player { get; private set; }
+    public Dealer Dealer { get; private set; }
+    private readonly IGameMode _gameMode;
+    public GameSession(IGameMode gameMode)
     {
-        private bool _isGameStarted;
-        private decimal _betAmount;
-        private bool _dealerSecondCardRevealed; 
-        private bool _isGameOver;
-        public bool IsGameOver => _isGameOver;
-
-        public bool IsGameStarted => _isGameStarted;
-        public Guid SessionId { get; private set; }
-        public Player Player { get; private set; }
-        public Dealer Dealer { get; private set; }
-        private readonly IGameMode _gameMode;
-        private bool _hasDoubledDown = false;
-        public bool HasDoubledDown => _hasDoubledDown;
-        public GameSession(IGameMode gameMode)
+        _gameMode = gameMode ?? new CasualMode();
+        _playerHands = new List<List<Card>>();
+        _currentHandIndex = 0;
+        _isGameStarted = false;
+        _isGameOver = false;
+        Player = new Player();
+        Dealer = new Dealer();
+        StartNewSession();
+    }
+    public void DoubleDown()
+    {
+        if (_hasDoubledDown)
         {
-            _gameMode = gameMode ?? new CasualMode();
-            _isGameStarted = false;
-            _isGameOver = false;
-            Player = new Player();
-            Dealer = new Dealer();
-            StartNewSession();
+            throw new InvalidOperationException("You can only double down once.");
         }
 
-        public void StartNewSession()
+        _betAmount *= 2;
+        _hasDoubledDown = true;
+    }
+    public void StartNewSession()
+    {
+        _playerHands = new List<List<Card>> { new List<Card>() };
+        _currentHandIndex = 0;
+        _isGameStarted = false;
+        _isGameOver = false;
+        _dealerSecondCardRevealed = false;
+        Player.Hand.Clear();
+        Dealer.Hand.Clear();
+    }
+    public void SetBetAmount(decimal amount)
+    {
+        if (amount <= 0)
         {
-            SessionId = Guid.NewGuid();
-            Player.Hand.Clear();
-            Dealer.Hand.Clear();
-            _betAmount = 0;
-            _dealerSecondCardRevealed = false;
-            _isGameStarted = false; 
+            throw new ArgumentException("Bet amount must be greater than zero.");
+        }
+        _betAmount = amount;
+        _originalBetAmount = amount;
+    }
+    public decimal GetBetAmount() => _betAmount;
+    public decimal GetOriginalBetAmount() => _originalBetAmount;
+    public void StartGame(Deck deck)
+    {
+        if (deck == null || deck.IsEmpty)
+        {
+            throw new InvalidOperationException("Deck is empty or not initialized.");
         }
 
-        public bool ValidateBet(decimal betAmount)
+        _gameMode.InitializeGame(Player, Dealer, deck);
+        _playerHands[0] = new List<Card>(Player.Hand);
+        _isGameStarted = true;
+        _isGameOver = false;
+    }
+    public List<Card> GetPlayerHand()
+    {
+        if (_currentHandIndex < _playerHands.Count)
         {
-            if (betAmount <= 0)
-            {
-                throw new InvalidBetAmountException("Bet amount must be greater than zero.");
-            }
-            _betAmount = betAmount;
-            return true;
+            return _playerHands[_currentHandIndex];
         }
-
-        public void SetBetAmount(decimal betAmount)
+        throw new InvalidOperationException("Invalid hand index.");
+    }
+    // public int GetPlayerScore()
+    // {
+    //     if (_currentHandIndex < _playerHands.Count)
+    //     {
+    //         return CalculateHandScore(_playerHands[_currentHandIndex]);
+    //     }
+    //     throw new InvalidOperationException("Invalid hand index.");
+    // }
+    public int GetPlayerScore()
+    {
+        if (_currentHandIndex < _playerHands.Count)
         {
-            if (betAmount <= 0)
-            {
-                throw new InvalidBetAmountException("Bet amount must be greater than zero.");
-            }
-            _betAmount = betAmount;
+            return CardHelper.CalculateHandScore(_playerHands[_currentHandIndex]);
         }
-
-        public decimal GetBetAmount() => _betAmount;
-
-        public void StartGame(Deck deck)
-        {
-            if (deck == null || deck.IsEmpty)
-            {
-                throw new InvalidOperationException("Deck is empty or not initialized.");
-            }
-
-            _gameMode.InitializeGame(Player, Dealer, deck);
-            _isGameStarted = true; 
-            _isGameOver = false; 
-
-            
-        }
-
-        public List<Card> GetDealerHand(bool revealSecondCard = false)
-        {
-            if (revealSecondCard || _dealerSecondCardRevealed)
-            {
-                return Dealer.Hand;
-            }
-
-            return new List<Card> { Dealer.Hand[0], new Card("hidden", "?", 0) };
-        }
-        public string PlayerHit(Deck deck)
-        {
-            if (!_isGameStarted)
-            {
-                throw new InvalidOperationException("The game has not started.");
-            }
-
-            var newCard = deck.DrawCard();
-            Player.Hand.Add(newCard);
-
-            if (Player.Score > 21)
-            {
-                _isGameStarted = false;
-                return "Player Bust";
-            }
-
-            if (Player.Score == 21)
-            {
-                while (Dealer.Score < 17)
-                {
-                    Dealer.Hand.Add(deck.DrawCard());
-                }
-
-                _isGameStarted = false; // Oyun sona erdi
-                return Dealer.Score == 21 ? "Draw" : "Player Wins with 21!";
-            }
-
-            return "Continue";
-        }
-
-     
-        
-        
-        public string PlayerStay(Deck deck)
-        {
-            if (!_isGameStarted)
-            {
-                throw new InvalidOperationException("The game has not started.");
-            }
-
-            _dealerSecondCardRevealed = true;
-
-            while (Dealer.Score < 17)
-            {
-                Dealer.Hand.Add(deck.DrawCard());
-            }
-
-            _isGameStarted = false; 
-            return _gameMode.DetermineOutcome(Player, Dealer, deck);
-        }
-        public void EndGame()
-        {
-            _isGameStarted = false;
-            _isGameOver = true;  
-        }
+        throw new InvalidOperationException("Invalid hand index.");
+    }
 
     
-
-        public string DetermineOutcome()
+    public string HitCurrentHand(Deck deck)
+    {
+        if (_currentHandIndex >= _playerHands.Count)
         {
-            if (!_isGameStarted)
-            {
-                throw new InvalidOperationException("The game has not started.");
-            }
-
-            return _gameMode.DetermineOutcome(Player, Dealer, new Deck());
+            throw new InvalidOperationException("No more hands to play.");
         }
 
-        public List<Card> GetPlayerHand() => Player.Hand;
+        var currentHand = _playerHands[_currentHandIndex];
+        var newCard = deck.DrawCard();
+        currentHand.Add(newCard);
 
-        public int GetPlayerScore() => Player.Score;
+        int handScore = CardHelper.CalculateHandScore(currentHand);
 
-        public int GetDealerScore(bool revealSecondCard = false)
+        if (handScore > 21)
         {
-            if (!_isGameStarted && !revealSecondCard)
+            _currentHandIndex++;
+            if (_currentHandIndex < _playerHands.Count)
             {
-                throw new InvalidOperationException("The game has not started, and dealer's second card cannot be revealed.");
+                return $"Player Bust on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
             }
 
-            int score = 0;
-            int aceCount = 0;
-
-            for (int i = 0; i < Dealer.Hand.Count; i++)
-            {
-                if (i == 1 && !revealSecondCard)
-                {
-                    continue;
-                }
-
-                var card = Dealer.Hand[i];
-                score += card.Value;
-
-                if (card.Rank == "A")
-                {
-                    aceCount++;
-                }
-            }
-
-            while (score > 21 && aceCount > 0)
-            {
-                score -= 10;
-                aceCount--;
-            }
-
-            return score;
+            _isGameOver = true;
+            return "Player Bust. Game over.";
         }
-        public void DoubleDown()
+
+        if (handScore == 21)
         {
-            if (_hasDoubledDown)
+            _currentHandIndex++;
+            if (_currentHandIndex < _playerHands.Count)
             {
-                throw new InvalidOperationException("You can only double down once.");
+                return $"Player Wins with 21 on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
             }
 
-            _betAmount *= 2;
-            _hasDoubledDown = true;
+            _isGameOver = true;
+            return "Player Wins with 21. Game over.";
+        }
+
+        return "Continue";
+    }
+
+    // public string HitCurrentHand(Deck deck)
+    // {
+    //     if (_currentHandIndex >= _playerHands.Count)
+    //     {
+    //         throw new InvalidOperationException("No more hands to play.");
+    //     }
+    //
+    //     var currentHand = _playerHands[_currentHandIndex];
+    //     var newCard = deck.DrawCard();
+    //     currentHand.Add(newCard);
+    //
+    //     int handScore = CalculateHandScore(currentHand);
+    //
+    //     if (handScore > 21)
+    //     {
+    //         _currentHandIndex++;
+    //         if (_currentHandIndex < _playerHands.Count)
+    //         {
+    //             return $"Player Bust on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
+    //         }
+    //
+    //         _isGameOver = true; 
+    //         return "Player Bust. Game over.";
+    //     }
+    //
+    //     if (handScore == 21)
+    //     {
+    //         _currentHandIndex++; 
+    //         if (_currentHandIndex < _playerHands.Count)
+    //         {
+    //             return $"Player Wins with 21 on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
+    //         }
+    //
+    //         _isGameOver = true;
+    //         return "Player Wins with 21. Game over.";
+    //     }
+    //
+    //     return "Continue";
+    // }
+
+
+    public string StayCurrentHand(Deck deck)
+    {
+        if (_currentHandIndex < _playerHands.Count - 1)
+        {
+            _currentHandIndex++; 
+            return $"Stayed on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
+        }
+        _dealerSecondCardRevealed = true;
+        while (Dealer.Score < 17)
+        {
+            Dealer.Hand.Add(deck.DrawCard());
+        }
+
+        _isGameOver = true;
+        return EvaluateFinalOutcome();
+    }
+
+
+    public void Split(Deck deck)
+    {
+        if (!CanSplit())
+        {
+            throw new InvalidOperationException("Split is not available.");
+        }
+
+        var firstCard = _playerHands[_currentHandIndex][0];
+        var secondCard = _playerHands[_currentHandIndex][1];
+
+        var firstHand = new List<Card> { firstCard, deck.DrawCard() };
+        var secondHand = new List<Card> { secondCard, deck.DrawCard() };
+
+        _playerHands = new List<List<Card>> { firstHand, secondHand }; 
+        _currentHandIndex = 0; 
+        _isGameStarted = true; 
+    }
+
+    public bool CanSplit()
+    {
+        if (_playerHands.Count != 1 || _playerHands[0].Count != 2)
+        {
+            return false;
+        }
+
+        return _playerHands[0][0].Value == _playerHands[0][1].Value;
+    }
+    public List<Card> GetDealerHand(bool revealSecondCard = false)
+    {
+        if (revealSecondCard || _dealerSecondCardRevealed)
+        {
+            return Dealer.Hand;
+        }
+
+        return new List<Card>
+        {
+            Dealer.Hand[0],
+            new Card("hidden", "?", 0)
+        };
+    }
+    public int GetDealerScore(bool revealSecondCard = false)
+    {
+        int score = 0;
+        int aceCount = 0;
+
+        for (int i = 0; i < Dealer.Hand.Count; i++)
+        {
+            if (i == 1 && !revealSecondCard)
+            {
+                continue;
+            }
+
+            var card = Dealer.Hand[i];
+            score += card.Value;
+
+            if (card.Rank == "A")
+            {
+                aceCount++;
+            }
+        }
+
+        while (score > 21 && aceCount > 0)
+        {
+            score -= 10;
+            aceCount--;
+        }
+
+        return score;
+    }
+    // private int CalculateHandScore(List<Card> hand)
+    // {
+    //     int score = 0;
+    //     int aceCount = 0;
+    //
+    //     foreach (var card in hand)
+    //     {
+    //         score += card.Value;
+    //         if (card.Rank == "A")
+    //         {
+    //             aceCount++;
+    //         }
+    //     }
+    //
+    //     while (score > 21 && aceCount > 0)
+    //     {
+    //         score -= 10;
+    //         aceCount--;
+    //     }
+    //
+    //     return score;
+    // }
+    private int CalculateHandScore(List<Card> hand)
+    {
+        if (hand == null || hand.Count == 0) return 0; // Boş el kontrolü
+
+        int score = 0;
+        int aceCount = 0;
+
+        foreach (var card in hand)
+        {
+            if (card == null) continue; // Null kartlar atlanır
+            score += card.Value;
+            if (card.Rank == "A") aceCount++; // As sayısını takip et
+        }
+
+        // Eğer skor 21'i aşarsa ve as varsa, as'ın değerini 11'den 1'e düşür
+        while (score > 21 && aceCount > 0)
+        {
+            score -= 10;
+            aceCount--;
+        }
+
+        return score;
+    }
+
+    // private string EvaluateFinalOutcome()
+    // {
+    //     var results = new List<string>();
+    //     foreach (var hand in _playerHands)
+    //     {
+    //         int handScore = CalculateHandScore(hand);
+    //
+    //         if (handScore > 21)
+    //         {
+    //             results.Add("Hand Bust");
+    //         }
+    //         else if (Dealer.Score > 21 || handScore > Dealer.Score)
+    //         {
+    //             results.Add("Player Won");
+    //         }
+    //         else if (handScore == Dealer.Score)
+    //         {
+    //             results.Add("Hand Draw");
+    //         }
+    //         else
+    //         {
+    //             results.Add("Dealer Wins");
+    //         }
+    //     }
+    //
+    //     return string.Join(", ", results);
+    // }
+    private string EvaluateFinalOutcome()
+    {
+        var results = new List<string>();
+        foreach (var hand in _playerHands)
+        {
+            int handScore = CardHelper.CalculateHandScore(hand); // Skor hesaplama
+
+            if (handScore > 21)
+            {
+                results.Add("Hand Bust");
+            }
+            else if (Dealer.Score > 21 || handScore > Dealer.Score)
+            {
+                results.Add("Player Won");
+            }
+            else if (handScore == Dealer.Score)
+            {
+                results.Add("Hand Draw");
+            }
+            else
+            {
+                results.Add("Dealer Wins");
+            }
+        }
+
+        return string.Join(", ", results);
+    }
+    public void NextHand()
+    {
+        if (_currentHandIndex < _playerHands.Count - 1)
+        {
+            _currentHandIndex++;
+        }
+        else
+        {
+            _isGameOver = true;
         }
     }
+    public void EndGame()
+    {
+        _isGameStarted = false;
+        _isGameOver = true;
+    }
+    public decimal CalculatePayout(bool isPlayerWin, bool isDraw)
+    {
+        if (isDraw)
+        {
+            return _originalBetAmount;
+        }
+        if (isPlayerWin)
+        {
+            return _originalBetAmount * 2;
+        }
+        return 0; 
+    } 
+    public string PlayerHit(Deck deck)
+     {
+         if (!_isGameStarted)
+         {
+             throw new InvalidOperationException("The game has not started.");
+         }
+
+         var currentHand = _playerHands[_currentHandIndex];
+         var newCard = deck.DrawCard();
+         currentHand.Add(newCard);
+
+         int handScore = CalculateHandScore(currentHand);
+
+         if (handScore > 21)
+         {
+             NextHand();
+             return "Player Bust";
+         }
+
+         if (handScore == 21)
+         {
+             NextHand();
+             return "Player Wins with 21!";
+         }
+
+         return "Continue";
+     }
 }
-
-    // public string PlayerStay(Deck deck)
-        // {
-        //     if (!_isGameStarted)
-        //     {
-        //         throw new InvalidOperationException("The game has not started.");
-        //     }
-        //
-        //     // Krupiyenin ikinci kartı açılır
-        //     _dealerSecondCardRevealed = true;
-        //
-        //     // Krupiye 17'ye ulaşana kadar kart çeker
-        //     while (Dealer.Score < 17)
-        //     {
-        //         Dealer.Hand.Add(deck.DrawCard());
-        //     }
-        //
-        //     // Sonuç belirlenir
-        //     var result = _gameMode.DetermineOutcome(Player, Dealer, deck);
-        //
-        //     // Oyun sona erdiği için bayrak güncellenir
-        //     _isGameStarted = false;
-        //
-        //     return result;
-        // }
-        // public string PlayerStay(Deck deck)
-        // {
-        //     if (!_isGameStarted|| _isGameOver)
-        //     {
-        //         throw new InvalidOperationException("The game has not started.");
-        //     }
-        //     _dealerSecondCardRevealed = true;
-        //     while (Dealer.Score < 17)
-        //     {
-        //         Dealer.Hand.Add(deck.DrawCard());
-        //     }
-        //     var result = _gameMode.DetermineOutcome(Player, Dealer, deck);
-        //     _isGameStarted = false;
-        //     _isGameOver = true; // Oyuncu hamlesini bitirdi, oyun sona erdi
-        //     return _gameMode.DetermineOutcome(Player, Dealer, deck);
-        // }
-
-        
-        // public string PlayerStay(Deck deck)
-        // {
-        //     if (!_isGameStarted)
-        //     {
-        //         throw new InvalidOperationException("The game has not started.");
-        //     }
-        //
-        //     _dealerSecondCardRevealed = true;
-        //
-        //     while (Dealer.Score < 17)
-        //     {
-        //         Dealer.Hand.Add(deck.DrawCard());
-        //     }
-        //
-        //     _isGameStarted = false; // Oyun sona erdi
-        //     return _gameMode.DetermineOutcome(Player, Dealer, deck);
-        // }
-   // public string PlayerHit(Deck deck)
-        // {
-        //     if (!_isGameStarted)
-        //     {
-        //         throw new InvalidOperationException("The game has not started.");
-        //     }
-        //
-        //     var newCard = deck.DrawCard();
-        //     Player.Hand.Add(newCard);
-        //
-        //     if (Player.Score > 21)
-        //     {
-        //         _isGameStarted = false;
-        //         return "Player Bust";
-        //     }
-        //
-        //     if (Player.Score == 21)
-        //     {
-        //         _isGameStarted = false;
-        //         return "Player Wins with 21!";
-        //     }
-        //
-        //     return "Continue";
-        // }
-        //
-        //
-        //
-        // public string PlayerHit(Deck deck)
-        // {
-        //     if (!_isGameStarted)
-        //     {
-        //         throw new InvalidOperationException("The game has not started. Please start the game before making a move.");
-        //     }
-        //
-        //     var newCard = deck.DrawCard();
-        //     Player.Hand.Add(newCard);
-        //
-        //     if (Player.Score > 21)
-        //     {
-        //         _isGameStarted = false; // Oyun sona eriyor
-        //         return "Player Bust";
-        //     }
-        //
-        //     if (Player.Score == 21)
-        //     {
-        //         _isGameStarted = false; // Oyun sona eriyor
-        //         return "Player Wins with 21!";
-        //     }
-        //
-        //     return "Continue";
-        // }
-        
-        // public string PlayerHit(Deck deck)
-        // {
-        //     if (!_isGameStarted|| _isGameOver)
-        //     {
-        //         throw new InvalidOperationException("The game has not started.");
-        //     }
-        //
-        //     var newCard = deck.DrawCard();
-        //     Player.Hand.Add(newCard);
-        //
-        //     if (Player.Score > 21)
-        //     {
-        //         _isGameOver = true;
-        //         return "Player Bust";
-        //     }
-        //
-        //     if (Player.Score == 21)
-        //     {
-        //         return "Player Wins with 21!"; 
-        //     }
-        //
-        //     return "Continue";
-        // }
-
-// using BlackJack.Exceptions;
-// using BlackJack.Service;
-//
-// namespace BlackJack.Models
-// {
-//     public class GameSession
-//     {
-//         private bool _isGameStarted;
-//
-//         public bool IsGameStarted => _isGameStarted;
-//         
-//         public Guid SessionId { get; private set; }
-//         public Player Player { get; private set; }
-//         public Dealer Dealer { get; private set; }
-//         private decimal _betAmount;
-//         private readonly IGameMode _gameMode;
-//         private bool _dealerSecondCardRevealed; 
-//
-//         public GameSession(IGameMode gameMode)
-//         {
-//             _gameMode = gameMode ?? new CasualMode();
-//             Player = new Player();
-//             Dealer = new Dealer();
-//             StartNewSession();
-//         }
-//
-//         public void StartNewSession()
-//         {
-//             SessionId = Guid.NewGuid();
-//             Player.Hand.Clear();
-//             Dealer.Hand.Clear();
-//             _betAmount = 0;
-//             _dealerSecondCardRevealed = false; 
-//         }
-//
-//         public bool ValidateBet(decimal betAmount)
-//         {
-//             if (betAmount <= 0)
-//             {
-//                 throw new InvalidBetAmountException("Bet amount must be greater than zero.");
-//             }
-//             _betAmount = betAmount;
-//             return true;
-//         }
-//
-//         public void SetBetAmount(decimal betAmount)
-//         {
-//             if (betAmount <= 0)
-//             {
-//                 throw new InvalidBetAmountException("Bet amount must be greater than zero.");
-//             }
-//             _betAmount = betAmount;
-//         }
-//
-//         public decimal GetBetAmount()
-//         {
-//             return _betAmount;
-//         }
-//
-//         public void StartGame(Deck deck)
-//         {
-//             _gameMode.InitializeGame(Player, Dealer, deck);
-//         }
-//
-//         public List<Card> GetDealerHand(bool revealSecondCard = false)
-//         {
-//             if (revealSecondCard || _dealerSecondCardRevealed)
-//             {
-//                 return Dealer.Hand;
-//             }
-//             else
-//             {
-//                 return new List<Card> { Dealer.Hand[0], new Card("Hidden", "?", 0) };
-//             }
-//         }
-//
-//         public string PlayerHit(Deck deck)
-//         {
-//             var newCard = deck.DrawCard();
-//             Player.Hand.Add(newCard);
-//
-//             if (Player.Score > 21)
-//                 return "Player Bust";
-//             if (Player.Score == 21)
-//                 return "Player Wins with 21!";
-//
-//             return "Continue";
-//         }
-//
-//         public string PlayerStay(Deck deck)
-//         {
-//             _dealerSecondCardRevealed = true; // İkinci kart açıldı
-//
-//             while (Dealer.Score < 17)
-//             {
-//                 Dealer.Hand.Add(deck.DrawCard());
-//             }
-//
-//             return _gameMode.DetermineOutcome(Player, Dealer, deck);
-//         }
-//
-//         public string DetermineOutcome()
-//         {
-//             return _gameMode.DetermineOutcome(Player, Dealer, new Deck());
-//         }
-//
-//         public List<Card> GetPlayerHand() => Player.Hand;
-//         public int GetPlayerScore() => Player.Score;
-//         public int GetDealerScore(bool revealSecondCard = false)
-//         {
-//             int score = 0;
-//             int aceCount = 0;
-//
-//             for (int i = 0; i < Dealer.Hand.Count; i++)
-//             {
-//                 if (i == 1 && !revealSecondCard)
-//                 {
-//                     continue;
-//                 }
-//
-//                 var card = Dealer.Hand[i];
-//                 score += card.Value;
-//
-//                 if (card.Rank == "A")
-//                 {
-//                     aceCount++;
-//                 }
-//             }
-//
-//             while (score > 21 && aceCount > 0)
-//             {
-//                 score -= 10;
-//                 aceCount--;
-//             }
-//
-//             return score;
-//         }
-//     }
-// }
+}
