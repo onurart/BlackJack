@@ -56,62 +56,6 @@ public class GameHelper
             Result = isPlayerWin ? "Player Wins!" : (isDraw ? "Draw" : "Dealer Wins!")
         };
     }
-
-    // public IActionResult EndGameWithDealerPlay(GameSession gameSession)
-    // {
-    //     while (gameSession.Dealer.Score < 17) 
-    //     {
-    //         var dealerCard = _deck.DrawCard();
-    //         gameSession.Dealer.Hand.Add(dealerCard);
-    //     }
-    //
-    //     var dealerFinalScore = gameSession.Dealer.Score; 
-    //     var isPlayerWin = dealerFinalScore > 21 || gameSession.GetPlayerScore() > dealerFinalScore;
-    //     var isDraw = gameSession.GetPlayerScore() == dealerFinalScore;
-    //
-    //     var payout = gameSession.CalculatePayout(isPlayerWin, isDraw);
-    //
-    //     gameSession.EndGame();
-    //
-    //     return new OkObjectResult(new
-    //     {
-    //         Message = isPlayerWin ? "Player Wins!" : (isDraw ? "Draw" : "Dealer Wins!"),
-    //         PlayerHand = gameSession.GetPlayerHand(),
-    //         PlayerScore = gameSession.GetPlayerScore(),
-    //         DealerHand = gameSession.GetDealerHand(true),
-    //         DealerScore = dealerFinalScore,
-    //         BetAmount = payout,
-    //         Result = isPlayerWin ? "Player Wins!" : (isDraw ? "Draw" : "Dealer Wins")
-    //     });
-    // }
-
-    // public IActionResult EndGameWithDealerPlay(GameSession gameSession)
-    // {
-    //     while (gameSession.GetDealerScore(true) < 17)
-    //     {
-    //         var dealerCard = _deck.DrawCard();
-    //         gameSession.Dealer.Hand.Add(dealerCard);
-    //     }
-    //
-    //     var dealerFinalScore = gameSession.GetDealerScore(true);
-    //     var isPlayerWin = dealerFinalScore > 21 || gameSession.GetPlayerScore() > dealerFinalScore;
-    //     var isDraw = gameSession.GetPlayerScore() == dealerFinalScore;
-    //
-    //     var payout = gameSession.CalculatePayout(isPlayerWin, isDraw);
-    //
-    //     gameSession.EndGame();
-    //
-    //     return new OkObjectResult(new
-    //     {
-    //         Message = isPlayerWin ? "Player Wins!" : (isDraw ? "Draw" : "Dealer Wins!"),
-    //         PlayerHand = gameSession.GetPlayerHand(),
-    //         PlayerScore = gameSession.GetPlayerScore(),
-    //         DealerHand = gameSession.GetDealerHand(true),
-    //         DealerScore = dealerFinalScore,
-    //         BetAmount = payout,
-    //         Result = isPlayerWin ? "Player Wins!" : (isDraw ? "Draw" : "Dealer Wins")
-    //     });
-    // }
     public IActionResult EndGameWithBlackjack(GameSession gameSession, Guid sessionId)
     {
         while (gameSession.GetDealerScore(true) < 17)
@@ -140,30 +84,7 @@ public class GameHelper
             IsGameOver = true
         });
     }
-    // public IActionResult? ValidateSessionAndBet(string sessionId, decimal betAmount)
-    // {
-    //     if (string.IsNullOrEmpty(sessionId))
-    //     {
-    //         return new BadRequestObjectResult(new { Message = "Session ID is required." });
-    //     }
-    //
-    //     if (!Guid.TryParse(sessionId, out _))
-    //     {
-    //         return new BadRequestObjectResult(new { Message = "Invalid Session ID format." });
-    //     }
-    //
-    //     if (!_sessionManager.ValidateSession(Guid.Parse(sessionId)))
-    //     {
-    //         return new BadRequestObjectResult(new { Message = "Invalid session ID" });
-    //     }
-    //
-    //     if (betAmount <= 0)
-    //     {
-    //         return new BadRequestObjectResult(new { Message = "Bet amount must be greater than zero." });
-    //     }
-    //
-    //     return null;
-    // }
+    
     public IActionResult? ValidateSessionAndBet(string sessionId, decimal betAmount)
     {
         if (string.IsNullOrEmpty(sessionId))

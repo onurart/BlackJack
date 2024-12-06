@@ -1,9 +1,5 @@
-﻿using BlackJack.Exceptions;
-using BlackJack.Helpers;
-using BlackJack.Service;
-
-namespace BlackJack.Models
-{
+﻿using BlackJack.Helpers;
+namespace BlackJack.Models;
 public class GameSession
 {
     private List<List<Card>> _playerHands;
@@ -18,7 +14,7 @@ public class GameSession
     public bool HasDoubledDown => _hasDoubledDown;
     public bool IsGameOver => _isGameOver;
     public bool IsGameStarted => _isGameStarted;
-    public List<List<Card>> PlayerHands => _playerHands;
+    public List<List<Card>> PlayerHand => _playerHands;
     public int CurrentHandIndex => _currentHandIndex;
     public Player Player { get; private set; }
     public Dealer Dealer { get; private set; }
@@ -79,30 +75,29 @@ public class GameSession
     }
     public List<Card> GetPlayerHand()
     {
-        if (_currentHandIndex < _playerHands.Count)
+        if (_currentHandIndex >= 0 && _currentHandIndex < _playerHands.Count)
         {
             return _playerHands[_currentHandIndex];
         }
-        throw new InvalidOperationException("Invalid hand index.");
+
+        if (_playerHands.Any())
+        {
+            return _playerHands.First(); 
+        }
+
+        return new List<Card>
+        {
+            new Card("unknown", "?", 0) 
+        };
     }
-    // public int GetPlayerScore()
-    // {
-    //     if (_currentHandIndex < _playerHands.Count)
-    //     {
-    //         return CalculateHandScore(_playerHands[_currentHandIndex]);
-    //     }
-    //     throw new InvalidOperationException("Invalid hand index.");
-    // }
     public int GetPlayerScore()
     {
-        if (_currentHandIndex < _playerHands.Count)
+        if (_currentHandIndex >= 0 && _currentHandIndex < _playerHands.Count)
         {
             return CardHelper.CalculateHandScore(_playerHands[_currentHandIndex]);
-        }
-        throw new InvalidOperationException("Invalid hand index.");
+        } 
+        return 0;
     }
-
-    
     public string HitCurrentHand(Deck deck)
     {
         if (_currentHandIndex >= _playerHands.Count)
@@ -116,19 +111,19 @@ public class GameSession
 
         int handScore = CardHelper.CalculateHandScore(currentHand);
 
-        if (handScore > 21)
+        if (handScore > 21) 
         {
-            _currentHandIndex++;
+            _currentHandIndex++; 
             if (_currentHandIndex < _playerHands.Count)
             {
                 return $"Player Bust on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
             }
 
-            _isGameOver = true;
-            return "Player Bust. Game over.";
+            _isGameOver = true; 
+            return "Player Bust. Game Over.";
         }
 
-        if (handScore == 21)
+        if (handScore == 21) 
         {
             _currentHandIndex++;
             if (_currentHandIndex < _playerHands.Count)
@@ -136,54 +131,12 @@ public class GameSession
                 return $"Player Wins with 21 on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
             }
 
-            _isGameOver = true;
-            return "Player Wins with 21. Game over.";
+            _isGameOver = true; 
+            return "Player Wins with 21. Game Over.";
         }
 
         return "Continue";
     }
-
-    // public string HitCurrentHand(Deck deck)
-    // {
-    //     if (_currentHandIndex >= _playerHands.Count)
-    //     {
-    //         throw new InvalidOperationException("No more hands to play.");
-    //     }
-    //
-    //     var currentHand = _playerHands[_currentHandIndex];
-    //     var newCard = deck.DrawCard();
-    //     currentHand.Add(newCard);
-    //
-    //     int handScore = CalculateHandScore(currentHand);
-    //
-    //     if (handScore > 21)
-    //     {
-    //         _currentHandIndex++;
-    //         if (_currentHandIndex < _playerHands.Count)
-    //         {
-    //             return $"Player Bust on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
-    //         }
-    //
-    //         _isGameOver = true; 
-    //         return "Player Bust. Game over.";
-    //     }
-    //
-    //     if (handScore == 21)
-    //     {
-    //         _currentHandIndex++; 
-    //         if (_currentHandIndex < _playerHands.Count)
-    //         {
-    //             return $"Player Wins with 21 on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
-    //         }
-    //
-    //         _isGameOver = true;
-    //         return "Player Wins with 21. Game over.";
-    //     }
-    //
-    //     return "Continue";
-    // }
-
-
     public string StayCurrentHand(Deck deck)
     {
         if (_currentHandIndex < _playerHands.Count - 1)
@@ -197,11 +150,9 @@ public class GameSession
             Dealer.Hand.Add(deck.DrawCard());
         }
 
-        _isGameOver = true;
+        _isGameOver = true; 
         return EvaluateFinalOutcome();
     }
-
-
     public void Split(Deck deck)
     {
         if (!CanSplit())
@@ -215,11 +166,10 @@ public class GameSession
         var firstHand = new List<Card> { firstCard, deck.DrawCard() };
         var secondHand = new List<Card> { secondCard, deck.DrawCard() };
 
-        _playerHands = new List<List<Card>> { firstHand, secondHand }; 
-        _currentHandIndex = 0; 
-        _isGameStarted = true; 
+        _playerHands = new List<List<Card>> { firstHand, secondHand };
+        _currentHandIndex = 0; // İlk ele odaklan
+        _isGameStarted = true;
     }
-
     public bool CanSplit()
     {
         if (_playerHands.Count != 1 || _playerHands[0].Count != 2)
@@ -271,43 +221,19 @@ public class GameSession
 
         return score;
     }
-    // private int CalculateHandScore(List<Card> hand)
-    // {
-    //     int score = 0;
-    //     int aceCount = 0;
-    //
-    //     foreach (var card in hand)
-    //     {
-    //         score += card.Value;
-    //         if (card.Rank == "A")
-    //         {
-    //             aceCount++;
-    //         }
-    //     }
-    //
-    //     while (score > 21 && aceCount > 0)
-    //     {
-    //         score -= 10;
-    //         aceCount--;
-    //     }
-    //
-    //     return score;
-    // }
     private int CalculateHandScore(List<Card> hand)
     {
-        if (hand == null || hand.Count == 0) return 0; // Boş el kontrolü
+        if (hand == null || hand.Count == 0) return 0;
 
         int score = 0;
         int aceCount = 0;
 
         foreach (var card in hand)
         {
-            if (card == null) continue; // Null kartlar atlanır
+            if (card == null) continue; 
             score += card.Value;
-            if (card.Rank == "A") aceCount++; // As sayısını takip et
+            if (card.Rank == "A") aceCount++;
         }
-
-        // Eğer skor 21'i aşarsa ve as varsa, as'ın değerini 11'den 1'e düşür
         while (score > 21 && aceCount > 0)
         {
             score -= 10;
@@ -316,40 +242,12 @@ public class GameSession
 
         return score;
     }
-
-    // private string EvaluateFinalOutcome()
-    // {
-    //     var results = new List<string>();
-    //     foreach (var hand in _playerHands)
-    //     {
-    //         int handScore = CalculateHandScore(hand);
-    //
-    //         if (handScore > 21)
-    //         {
-    //             results.Add("Hand Bust");
-    //         }
-    //         else if (Dealer.Score > 21 || handScore > Dealer.Score)
-    //         {
-    //             results.Add("Player Won");
-    //         }
-    //         else if (handScore == Dealer.Score)
-    //         {
-    //             results.Add("Hand Draw");
-    //         }
-    //         else
-    //         {
-    //             results.Add("Dealer Wins");
-    //         }
-    //     }
-    //
-    //     return string.Join(", ", results);
-    // }
     private string EvaluateFinalOutcome()
     {
         var results = new List<string>();
         foreach (var hand in _playerHands)
         {
-            int handScore = CardHelper.CalculateHandScore(hand); // Skor hesaplama
+            int handScore = CardHelper.CalculateHandScore(hand); 
 
             if (handScore > 21)
             {
@@ -426,5 +324,4 @@ public class GameSession
 
          return "Continue";
      }
-}
 }

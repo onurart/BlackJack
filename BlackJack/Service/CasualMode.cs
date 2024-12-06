@@ -1,7 +1,4 @@
-﻿
-using BlackJack.Models;
-
-namespace BlackJack.Service
+﻿namespace BlackJack.Service
 {
     public class CasualMode : IGameMode
     {

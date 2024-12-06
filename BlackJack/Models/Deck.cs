@@ -28,10 +28,6 @@ public class Deck
             }
         }
     }
-    // public void Shuffle()
-    // {
-    //     _cards = _cards.OrderBy(x => _random.Next()).ToList();
-    // }
     public void Shuffle()
     {
         for (int i = _cards.Count - 1; i > 0; i--)
