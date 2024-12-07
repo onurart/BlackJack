@@ -1,7 +1,6 @@
-﻿using BlackJack.Helpers;
+﻿namespace BlackJack.Controllers;
 
-namespace BlackJack.Controllers;
-
+[ApiController]
 [Route("api/blackjack")]
 public class BlackJackController : ControllerBase
 {
@@ -23,6 +22,7 @@ public class BlackJackController : ControllerBase
         {
             return BadRequest(new { Message = "The username field is required." });
         }
+
         var sessionId = _sessionManager.StartNewSession(loginRequest.username);
         return Ok(new { Message = "Login successful", SessionId = sessionId });
     }
@@ -118,9 +118,10 @@ public class BlackJackController : ControllerBase
                 DealerHand = dealerHand,
                 DealerScore = dealerScore,
                 HandResults = handResults,
-                OverallResult = string.Join(", ", handResults) 
+                OverallResult = string.Join(", ", handResults)
             });
         }
+
         return Ok(new
         {
             Message = result,
@@ -133,55 +134,78 @@ public class BlackJackController : ControllerBase
             OverallResult = "Continue"
         });
     }
-
+    
     [HttpPost("double-down")]
-    public IActionResult DoubleDown([FromBody] RequestSession request)
+public IActionResult DoubleDown([FromBody] RequestSession request)
+{
+    if (request == null || string.IsNullOrEmpty(request.SessionId))
     {
-        if (request == null || string.IsNullOrEmpty(request.SessionId))
-        {
-            return BadRequest(new { Message = "Session ID is required." });
-        }
+        return BadRequest(new { Message = "Session ID is required." });
+    }
 
-        if (!Guid.TryParse(request.SessionId, out Guid sessionId))
-        {
-            return BadRequest(new { Message = "Invalid Session ID format." });
-        }
+    if (!Guid.TryParse(request.SessionId, out Guid sessionId))
+    {
+        return BadRequest(new { Message = "Invalid Session ID format." });
+    }
 
-        if (!_sessionManager.ValidateSession(sessionId))
-        {
-            return BadRequest(new { Message = "Invalid session ID" });
-        }
+    if (!_sessionManager.ValidateSession(sessionId))
+    {
+        return BadRequest(new { Message = "Invalid session ID" });
+    }
 
-        var gameSession = _sessionManager.GetGameSession(sessionId);
-        if (gameSession == null)
-        {
-            return BadRequest(new { Message = "Session not found." });
-        }
+    var gameSession = _sessionManager.GetGameSession(sessionId);
+    if (gameSession == null)
+    {
+        return BadRequest(new { Message = "Session not found." });
+    }
 
-        if (!gameSession.IsGameStarted)
-        {
-            return BadRequest(new { Message = "The game has not started. Please start the game first." });
-        }
+    if (!gameSession.IsGameStarted)
+    {
+        return BadRequest(new { Message = "The game has not started. Please start the game first." });
+    }
 
-        if (gameSession.HasDoubledDown)
-        {
-            return BadRequest(new { Message = "You have already doubled down." });
-        }
+    if (gameSession.HasDoubledDown)
+    {
+        return BadRequest(new { Message = "You have already doubled down on this hand." });
+    }
 
-        gameSession.DoubleDown();
-        var playerResult = gameSession.PlayerHit(_deck);
-        if (playerResult == "Player Bust")
+    // Perform double-down for the current hand
+    gameSession.DoubleDown();
+    var playerResult = gameSession.PlayerHit(_deck);
+
+    // Check for bust (score > 21) on the current hand
+    var currentHandScore = CardHelper.CalculateHandScore(gameSession.PlayerHand[gameSession.CurrentHandIndex]);
+    if (currentHandScore > 21)
+    {
+        if (gameSession.CurrentHandIndex < gameSession.PlayerHand.Count - 1)
+        {
+            gameSession.NextHand();
+            return Ok(new
+            {
+                Message = "You lost on the current hand. Moving to the next hand.",
+                PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+                PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+                CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+                OverallResult = "Lose"
+            });
+        }
+        else
         {
             gameSession.EndGame();
             return Ok(new
             {
-                Message = "You busted after doubling down. Game over.",
-                PlayerHand = gameSession.GetPlayerHand(),
-                PlayerScore = gameSession.GetPlayerScore(),
-                Result = playerResult
+                Message = "You lose after doubling down. Game over.",
+                PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+                PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+                CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+                OverallResult = "Lose"
             });
         }
+    }
 
+    // If the dealer reveals cards after the final hand
+    if (gameSession.CurrentHandIndex == gameSession.PlayerHand.Count - 1)
+    {
         while (gameSession.GetDealerScore(true) < 17)
         {
             var dealerCard = _deck.DrawCard();
@@ -189,26 +213,247 @@ public class BlackJackController : ControllerBase
         }
 
         var dealerFinalScore = gameSession.GetDealerScore(true);
-        var isPlayerWin = dealerFinalScore > 21 || gameSession.GetPlayerScore() > dealerFinalScore;
-        var isDraw = gameSession.GetPlayerScore() == dealerFinalScore;
-        var resultMessage = isPlayerWin
-            ? "Player Wins!"
-            : isDraw
-                ? "Draw"
-                : "Dealer Wins!";
-        var payout = gameSession.CalculatePayout(isPlayerWin, isDraw);
+        var handResults = gameSession.PlayerHand.Select((hand, index) =>
+        {
+            var score = CardHelper.CalculateHandScore(hand);
+            if (score > 21)
+            {
+                return $"Hand {index + 1}: Lose";
+            }
+            if (dealerFinalScore > 21 || score > dealerFinalScore)
+            {
+                return $"Hand {index + 1}: Player Wins!";
+            }
+            if (score == dealerFinalScore)
+            {
+                return $"Hand {index + 1}: Draw";
+            }
+            return $"Hand {index + 1}: Dealer Wins!";
+        }).ToList();
+
         gameSession.EndGame();
+
         return Ok(new
         {
-            Message = "Double down completed. " + resultMessage,
-            PlayerHand = gameSession.GetPlayerHand(),
-            PlayerScore = gameSession.GetPlayerScore(),
+            Message = "Double down completed.",
+            PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+            PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
             DealerHand = gameSession.GetDealerHand(true),
             DealerScore = dealerFinalScore,
-            BetAmount = payout,
-            Result = resultMessage
+            HandResults = handResults,
+            OverallResult = string.Join(", ", handResults)
         });
     }
+
+    // Game continues to the next hand
+    gameSession.NextHand();
+    return Ok(new
+    {
+        Message = "Double down completed. Moving to the next hand.",
+        PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+        PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+        CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+        OverallResult = "Continue"
+    });
+}
+
+
+//     [HttpPost("double-down")]
+// public IActionResult DoubleDown([FromBody] RequestSession request)
+// {
+//     if (request == null || string.IsNullOrEmpty(request.SessionId))
+//     {
+//         return BadRequest(new { Message = "Session ID is required." });
+//     }
+//
+//     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
+//     {
+//         return BadRequest(new { Message = "Invalid Session ID format." });
+//     }
+//
+//     if (!_sessionManager.ValidateSession(sessionId))
+//     {
+//         return BadRequest(new { Message = "Invalid session ID" });
+//     }
+//
+//     var gameSession = _sessionManager.GetGameSession(sessionId);
+//     if (gameSession == null)
+//     {
+//         return BadRequest(new { Message = "Session not found." });
+//     }
+//
+//     if (!gameSession.IsGameStarted)
+//     {
+//         return BadRequest(new { Message = "The game has not started. Please start the game first." });
+//     }
+//
+//     if (gameSession.HasDoubledDown)
+//     {
+//         return BadRequest(new { Message = "You have already doubled down on this hand." });
+//     }
+//
+//     gameSession.DoubleDown();
+//     var playerResult = gameSession.PlayerHit(_deck);
+//
+//     var currentHandScore = CardHelper.CalculateHandScore(gameSession.PlayerHand[gameSession.CurrentHandIndex]);
+//     if (currentHandScore > 21)
+//     {
+//         if (gameSession.CurrentHandIndex < gameSession.PlayerHand.Count - 1)
+//         {
+//             gameSession.NextHand();
+//             return Ok(new
+//             {
+//                 Message = "You lost on the current hand. Moving to the next hand.",
+//                 PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+//                 PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+//                 CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+//                 OverallResult = "Lose"
+//             });
+//         }
+//         else
+//         {
+//             gameSession.EndGame();
+//             return Ok(new
+//             {
+//                 Message = "You lose after doubling down. Game over.",
+//                 PlayerHands = gameSession.PlayerHand,
+//                 PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+//                 OverallResult = "Lose"
+//             });
+//         }
+//     }
+//
+//     if (gameSession.CurrentHandIndex == gameSession.PlayerHand.Count - 1)
+//     {
+//         while (gameSession.GetDealerScore(true) < 17)
+//         {
+//             var dealerCard = _deck.DrawCard();
+//             gameSession.Dealer.Hand.Add(dealerCard);
+//         }
+//
+//         var dealerFinalScore = gameSession.GetDealerScore(true);
+//         var handResults = gameSession.PlayerHand.Select((hand, index) =>
+//         {
+//             var score = CardHelper.CalculateHandScore(hand);
+//             if (score > 21)
+//             {
+//                 return $"Hand {index + 1}: Lose";
+//             }
+//             if (dealerFinalScore > 21 || score > dealerFinalScore)
+//             {
+//                 return $"Hand {index + 1}: Player Wins!";
+//             }
+//             if (score == dealerFinalScore)
+//             {
+//                 return $"Hand {index + 1}: Draw";
+//             }
+//             return $"Hand {index + 1}: Dealer Wins!";
+//         }).ToList();
+//
+//         gameSession.EndGame();
+//
+//         return Ok(new
+//         {
+//             Message = "Double down completed.",
+//             PlayerHands = gameSession.PlayerHand,
+//             PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+//             DealerHand = gameSession.GetDealerHand(true),
+//             DealerScore = dealerFinalScore,
+//             HandResults = handResults,
+//             OverallResult = string.Join(", ", handResults)
+//         });
+//     }
+//
+//     // If the game continues to the next hand
+//     gameSession.NextHand();
+//     return Ok(new
+//     {
+//         Message = "Double down completed. Moving to the next hand.",
+//         PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+//         PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+//         CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+//         OverallResult = "Continue"
+//     });
+// }
+
+
+
+
+    // [HttpPost("double-down")]
+    // public IActionResult DoubleDown([FromBody] RequestSession request)
+    // {
+    //     if (request == null || string.IsNullOrEmpty(request.SessionId))
+    //     {
+    //         return BadRequest(new { Message = "Session ID is required." });
+    //     }
+    //
+    //     if (!Guid.TryParse(request.SessionId, out Guid sessionId))
+    //     {
+    //         return BadRequest(new { Message = "Invalid Session ID format." });
+    //     }
+    //
+    //     if (!_sessionManager.ValidateSession(sessionId))
+    //     {
+    //         return BadRequest(new { Message = "Invalid session ID" });
+    //     }
+    //
+    //     var gameSession = _sessionManager.GetGameSession(sessionId);
+    //     if (gameSession == null)
+    //     {
+    //         return BadRequest(new { Message = "Session not found." });
+    //     }
+    //
+    //     if (!gameSession.IsGameStarted)
+    //     {
+    //         return BadRequest(new { Message = "The game has not started. Please start the game first." });
+    //     }
+    //
+    //     if (gameSession.HasDoubledDown)
+    //     {
+    //         return BadRequest(new { Message = "You have already doubled down." });
+    //     }
+    //
+    //     gameSession.DoubleDown();
+    //     var playerResult = gameSession.PlayerHit(_deck);
+    //     if (playerResult == "Player lose")
+    //     {
+    //         gameSession.EndGame();
+    //         return Ok(new
+    //         {
+    //             Message = "You lose after doubling down. Game over.",
+    //             PlayerHand = gameSession.GetPlayerHand(),
+    //             PlayerScore = gameSession.GetPlayerScore(),
+    //             Result = playerResult
+    //         });
+    //     }
+    //
+    //     while (gameSession.GetDealerScore(true) < 17)
+    //     {
+    //         var dealerCard = _deck.DrawCard();
+    //         gameSession.Dealer.Hand.Add(dealerCard);
+    //     }
+    //
+    //     var dealerFinalScore = gameSession.GetDealerScore(true);
+    //     var isPlayerWin = dealerFinalScore > 21 || gameSession.GetPlayerScore() > dealerFinalScore;
+    //     var isDraw = gameSession.GetPlayerScore() == dealerFinalScore;
+    //     var resultMessage = isPlayerWin
+    //         ? "Player Wins!"
+    //         : isDraw
+    //             ? "Draw"
+    //             : "Dealer Wins!";
+    //     var payout = gameSession.CalculatePayout(isPlayerWin, isDraw);
+    //     gameSession.EndGame();
+    //     return Ok(new
+    //     {
+    //         Message = "Double down completed. " + resultMessage,
+    //         PlayerHand = gameSession.GetPlayerHand(),
+    //         PlayerScore = gameSession.GetPlayerScore(),
+    //         DealerHand = gameSession.GetDealerHand(true),
+    //         DealerScore = dealerFinalScore,
+    //         BetAmount = payout,
+    //         Result = resultMessage
+    //     });
+    // }
 
     [HttpPost("hit-dealer")]
     public IActionResult HitDealer([FromBody] RequestSession request)
@@ -235,143 +480,317 @@ public class BlackJackController : ControllerBase
     }
 
     [HttpPost("stay")]
-    public IActionResult Stay([FromBody] RequestSession request)
+public IActionResult Stay([FromBody] RequestSession request)
+{
+    var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+    if (gameSession == null)
     {
-        var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
-        if (gameSession == null)
-        {
-            return BadRequest(new { Message = "Invalid session ID or game not started." });
-        }
+        return BadRequest(new { Message = "Invalid session ID or game not started." });
+    }
 
-        if (gameSession.IsGameOver)
-        {
-            return BadRequest(new { Message = "The game is already over. Please start a new game." });
-        }
+    if (gameSession.IsGameOver)
+    {
+        return BadRequest(new { Message = "The game is already over. Please start a new game." });
+    }
 
-        var result = gameSession.StayCurrentHand(_deck);
+    // Perform the stay operation for the current hand
+    var result = gameSession.StayCurrentHand(_deck);
 
-        if (!gameSession.IsGameOver)
-        {
-            return Ok(new
-            {
-                Message = result,
-                CurrentHandIndex = gameSession.CurrentHandIndex + 1,
-                PlayerHands = gameSession.PlayerHand,
-                PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
-                Result = "Continue to the next hand"
-            });
-        }
-
-        var handScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList();
-        var dealerScore = gameSession.GetDealerScore(true);
-        var dealerHand = gameSession.GetDealerHand(true);
-        var handsResults = gameSession.PlayerHand.Select((hand, index) =>
-        {
-            var playerScore = CardHelper.CalculateHandScore(hand);
-            string resultMessage;
-            if (playerScore > 21)
-            {
-                resultMessage = $"Hand {index + 1}: Bust";
-            }
-
-            else if (dealerScore > 21 || playerScore > dealerScore)
-            {
-                resultMessage = $"Hand {index + 1}: Win";
-            }
-
-            else if (playerScore == dealerScore)
-            {
-                resultMessage = $"Hand {index + 1}: Draw";
-            }
-            else
-            {
-                resultMessage = $"Hand {index + 1}: Lose";
-            }
-
-            return new
-            {
-                HandIndex = index + 1,
-                PlayerScore = playerScore,
-                Result = resultMessage
-            };
-        }).ToList();
-        var overallResult = handsResults.Select(r => r.Result).ToList();
-        gameSession.EndGame();
+    // Check if the game continues to the next hand
+    if (!gameSession.IsGameOver)
+    {
         return Ok(new
         {
-            Message = "Game Over",
-            PlayerHands = gameSession.PlayerHand,
-            PlayerScores = handScores,
-            DealerHand = dealerHand,
-            DealerScore = dealerScore,
-            HandsResults = handsResults,
-            OverallResult = overallResult
+            Message = result,
+            PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+            PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+            CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+            OverallResult = "Continue to the next hand"
         });
     }
 
+    // Calculate scores for the final state
+    var handScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList();
+    var dealerScore = gameSession.GetDealerScore(true);
+    var dealerHand = gameSession.GetDealerHand(true);
+
+    // Evaluate results for each hand
+    var handResults = gameSession.PlayerHand.Select((hand, index) =>
+    {
+        var playerScore = CardHelper.CalculateHandScore(hand);
+        if (playerScore > 21)
+        {
+            return $"Hand {index + 1}: Lose";
+        }
+        if (dealerScore > 21 || playerScore > dealerScore)
+        {
+            return $"Hand {index + 1}: Win";
+        }
+        if (playerScore == dealerScore)
+        {
+            return $"Hand {index + 1}: Draw";
+        }
+        return $"Hand {index + 1}: Lose";
+    }).ToList();
+
+    gameSession.EndGame();
+
+    // Return final game results
+    return Ok(new
+    {
+        Message = "Game Over",
+        PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
+        PlayerScores = handScores,
+        DealerHand = dealerHand,
+        DealerScore = dealerScore,
+        HandResults = handResults,
+        OverallResult = string.Join(", ", handResults)
+    });
+}
+
+    
+    // [HttpPost("stay")]
+    // public IActionResult Stay([FromBody] RequestSession request)
+    // {
+    //     var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+    //     if (gameSession == null)
+    //     {
+    //         return BadRequest(new { Message = "Invalid session ID or game not started." });
+    //     }
+    //
+    //     if (gameSession.IsGameOver)
+    //     {
+    //         return BadRequest(new { Message = "The game is already over. Please start a new game." });
+    //     }
+    //
+    //     var result = gameSession.StayCurrentHand(_deck);
+    //
+    //     if (!gameSession.IsGameOver)
+    //     {
+    //         return Ok(new
+    //         {
+    //             Message = result,
+    //             CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+    //             PlayerHands = gameSession.PlayerHand,
+    //             PlayerScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList(),
+    //             Result = "Continue to the next hand"
+    //         });
+    //     }
+    //
+    //     var handScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList();
+    //     var dealerScore = gameSession.GetDealerScore(true);
+    //     var dealerHand = gameSession.GetDealerHand(true);
+    //     var handsResults = gameSession.PlayerHand.Select((hand, index) =>
+    //     {
+    //         var playerScore = CardHelper.CalculateHandScore(hand);
+    //         string resultMessage;
+    //         if (playerScore > 21)
+    //         {
+    //             resultMessage = $"Hand {index + 1}: Lose";
+    //         }
+    //
+    //         else if (dealerScore > 21 || playerScore > dealerScore)
+    //         {
+    //             resultMessage = $"Hand {index + 1}: Win";
+    //         }
+    //
+    //         else if (playerScore == dealerScore)
+    //         {
+    //             resultMessage = $"Hand {index + 1}: Draw";
+    //         }
+    //         else
+    //         {
+    //             resultMessage = $"Hand {index + 1}: Lose";
+    //         }
+    //
+    //         return new
+    //         {
+    //             HandIndex = index + 1,
+    //             PlayerScore = playerScore,
+    //             Result = resultMessage
+    //         };
+    //     }).ToList();
+    //     var overallResult = handsResults.Select(r => r.Result).ToList();
+    //     gameSession.EndGame();
+    //     return Ok(new
+    //     {
+    //         Message = "Game Over",
+    //         PlayerHands = gameSession.PlayerHand,
+    //         PlayerScores = handScores,
+    //         DealerHand = dealerHand,
+    //         DealerScore = dealerScore,
+    //         HandsResults = handsResults,
+    //         OverallResult = overallResult
+    //     });
+    // }
+
+  
     [HttpPost("split")]
     public IActionResult Split([FromBody] RequestSession request)
     {
+        // Validate game session
         var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
         if (gameSession == null)
         {
             return BadRequest(new { Message = "Invalid session ID or game not started." });
         }
 
+        // Check if splitting is allowed
         if (!gameSession.CanSplit())
         {
             return BadRequest(new { Message = "Split is only available if both cards have the same value." });
         }
 
+        // Perform the split operation
         gameSession.Split(_deck);
+
+        // Calculate scores for player hands
         var handScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList();
-        bool showDealerHand = handScores.All(score => score > 21) || handScores.Any(score => score <= 21);
-        var dealerHand = gameSession.GetDealerHand(showDealerHand);
-        var dealerScore = gameSession.GetDealerScore(showDealerHand);
-        var handResults = gameSession.PlayerHand.Select((hand, index) =>
-        {
-            var score = CardHelper.CalculateHandScore(hand);
-            if (score > 21)
-            {
-                return $"Hand {index + 1}: Lose";
-            }
 
-            if (dealerScore > 21 || score > dealerScore)
-            {
-                return $"Hand {index + 1}: Player Wins!";
-            }
-
-            if (score == dealerScore)
-            {
-                return $"Hand {index + 1}: Draw";
-            }
-
-            return $"Hand {index + 1}: Lose";
-        }).ToList();
-        if (handScores.All(score => score > 21))
-        {
-            gameSession.EndGame();
-            return Ok(new
-            {
-                Message = "Both hands bust. Dealer wins.",
-                PlayerHands = gameSession.PlayerHand,
-                PlayerScores = handScores,
-                DealerHand = dealerHand,
-                DealerScore = dealerScore,
-                HandResults = handResults,
-                OverallResult = string.Join(", ", handResults)
-            });
-        }
-
+        // Return a response without dealer information
         return Ok(new
         {
             Message = "Hand split successfully. Playing Hand 1.",
-            PlayerHands = gameSession.PlayerHand,
+            PlayerHands = gameSession.PlayerHand.Select((hand, index) => new { HandIndex = index + 1, Cards = hand }).ToList(),
             PlayerScores = handScores,
-            DealerHand = dealerHand,
-            DealerScore = dealerScore,
-            HandResults = handResults,
-            OverallResult = string.Join(", ", handResults)
+            CurrentHandIndex = gameSession.CurrentHandIndex + 1,
+            OverallResult = "Continue"
         });
     }
+
+
+    // [HttpPost("split")]
+    // public IActionResult Split([FromBody] RequestSession request)
+    // {
+    //     var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+    //     if (gameSession == null)
+    //     {
+    //         return BadRequest(new { Message = "Invalid session ID or game not started." });
+    //     }
+    //
+    //     if (!gameSession.CanSplit())
+    //     {
+    //         return BadRequest(new { Message = "Split is only available if both cards have the same value." });
+    //     }
+    //
+    //     gameSession.Split(_deck);
+    //
+    //     var handScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList();
+    //     bool showDealerHand = handScores.All(score => score > 21) || handScores.Any(score => score <= 21);
+    //     var dealerHand = gameSession.GetDealerHand(showDealerHand);
+    //     int? dealerScore = showDealerHand ? gameSession.GetDealerScore(true) : (int?)null;
+    //
+    //     var handResults = gameSession.PlayerHand.Select((hand, index) =>
+    //     {
+    //         var score = CardHelper.CalculateHandScore(hand);
+    //         if (score > 21)
+    //         {
+    //             return $"Hand {index + 1}: Lose";
+    //         }
+    //
+    //         if (dealerScore > 21 || score > dealerScore)
+    //         {
+    //             return $"Hand {index + 1}: Player Wins!";
+    //         }
+    //
+    //         if (score == dealerScore)
+    //         {
+    //             return $"Hand {index + 1}: Draw";
+    //         }
+    //
+    //         return $"Hand {index + 1}: Lose";
+    //     }).ToList();
+    //
+    //     if (handScores.All(score => score > 21))
+    //     {
+    //         gameSession.EndGame();
+    //         return Ok(new
+    //         {
+    //             Message = "Both hands lose. Dealer wins.",
+    //             PlayerHands = gameSession.PlayerHand,
+    //             PlayerScores = handScores,
+    //             DealerHand = dealerHand,
+    //             DealerScore = dealerScore,
+    //             HandResults = handResults,
+    //             OverallResult = string.Join(", ", handResults)
+    //         });
+    //     }
+    //
+    //     return Ok(new
+    //     {
+    //         Message = "Hand split successfully. Playing Hand 1.",
+    //         PlayerHands = gameSession.PlayerHand,
+    //         PlayerScores = handScores,
+    //         DealerHand = dealerHand,
+    //         DealerScore = dealerScore,
+    //         HandResults = handResults,
+    //         OverallResult = string.Join(", ", handResults)
+    //     });
+    // }
+
+    // [HttpPost("split")]
+    // public IActionResult Split([FromBody] RequestSession request)
+    // {
+    //     var gameSession = _gameHelper.GetValidatedGameSession(request.SessionId);
+    //     if (gameSession == null)
+    //     {
+    //         return BadRequest(new { Message = "Invalid session ID or game not started." });
+    //     }
+    //
+    //     if (!gameSession.CanSplit())
+    //     {
+    //         return BadRequest(new { Message = "Split is only available if both cards have the same value." });
+    //     }
+    //
+    //     gameSession.Split(_deck);
+    //     var handScores = gameSession.PlayerHand.Select(CardHelper.CalculateHandScore).ToList();
+    //     bool showDealerHand = handScores.All(score => score > 21) || handScores.Any(score => score <= 21);
+    //     var dealerHand = gameSession.GetDealerHand(showDealerHand);
+    //     var dealerScore = gameSession.GetDealerScore(showDealerHand);
+    //     var handResults = gameSession.PlayerHand.Select((hand, index) =>
+    //     {
+    //         var score = CardHelper.CalculateHandScore(hand);
+    //         if (score > 21)
+    //         {
+    //             return $"Hand {index + 1}: Lose";
+    //         }
+    //
+    //         if (dealerScore > 21 || score > dealerScore)
+    //         {
+    //             return $"Hand {index + 1}: Player Wins!";
+    //         }
+    //
+    //         if (score == dealerScore)
+    //         {
+    //             return $"Hand {index + 1}: Draw";
+    //         }
+    //
+    //         return $"Hand {index + 1}: Lose";
+    //     }).ToList();
+    //     if (handScores.All(score => score > 21))
+    //     {
+    //         gameSession.EndGame();
+    //         return Ok(new
+    //         {
+    //             Message = "Both hands lose. Dealer wins.",
+    //             PlayerHands = gameSession.PlayerHand,
+    //             PlayerScores = handScores,
+    //             DealerHand = dealerHand,
+    //             DealerScore = dealerScore,
+    //             HandResults = handResults,
+    //             OverallResult = string.Join(", ", handResults)
+    //         });
+    //     }
+    //
+    //     return Ok(new
+    //     {
+    //         Message = "Hand split successfully. Playing Hand 1.",
+    //         PlayerHands = gameSession.PlayerHand,
+    //         PlayerScores = handScores,
+    //         DealerHand = dealerHand,
+    //         DealerScore = dealerScore,
+    //         HandResults = handResults,
+    //         OverallResult = string.Join(", ", handResults)
+    //     });
+    // }
 }

@@ -116,11 +116,11 @@ public class GameSession
             _currentHandIndex++; 
             if (_currentHandIndex < _playerHands.Count)
             {
-                return $"Player Bust on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
+                return $"Player lose on Hand {_currentHandIndex}. Moving to Hand {_currentHandIndex + 1}.";
             }
 
             _isGameOver = true; 
-            return "Player Bust. Game Over.";
+            return "Player lose. Game Over.";
         }
 
         if (handScore == 21) 
@@ -167,7 +167,7 @@ public class GameSession
         var secondHand = new List<Card> { secondCard, deck.DrawCard() };
 
         _playerHands = new List<List<Card>> { firstHand, secondHand };
-        _currentHandIndex = 0; // İlk ele odaklan
+        _currentHandIndex = 0;
         _isGameStarted = true;
     }
     public bool CanSplit()
@@ -251,7 +251,7 @@ public class GameSession
 
             if (handScore > 21)
             {
-                results.Add("Hand Bust");
+                results.Add("Hand lose");
             }
             else if (Dealer.Score > 21 || handScore > Dealer.Score)
             {
@@ -313,7 +313,7 @@ public class GameSession
          if (handScore > 21)
          {
              NextHand();
-             return "Player Bust";
+             return "Player lose";
          }
 
          if (handScore == 21)
